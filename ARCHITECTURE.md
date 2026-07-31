@@ -13,9 +13,11 @@ WheelVision is a metadata-driven preview platform for wheel and tyre configurati
 
 ## Structure
 
-- app/: Next.js App Router entry points and API route re-exports.
+- app/: Next.js App Router entry points and API route re-exports (catalog + quotes).
 - server/: API backend — controllers, services, repositories, validators, middleware and tenant context.
+- server/quote/: the quote domain core — money kernel (integer cents, half-up basis points), tax strategy seam (ZA VAT 15% via registry), totals pipeline (lines → price rules → discounts → VAT), quote builder (DTO + snapshot payload), quote numbering, standard terms. Pure and fully unit tested; see docs/quotes/pricing-engine.md.
 - features/catalog/: frontend data layer (typed API client, React Query hooks, query keys) — the only component-facing data path.
+- features/quotes/: the quote workspace — typed /api/quotes* client, hierarchical query keys, React Query hooks, share payloads (link/mailto/WhatsApp/clipboard), workspace dialog (compose + immutable view), history, and the print-only quotation document. All pricing happens server-side; the UI renders issued quotations — see docs/quotes/quote-domain.md.
 - features/preview/: preview feature built on the catalog layer.
   - engine/: the metadata-driven rendering engine (renderer-math, asset-loader, render-context, scene-composer, layer-types, renderer-provider, vehicle-canvas) — see docs/rendering/engine.md.
   - state/: PreviewStore (Zustand, localStorage-persisted) and configuration storage.
@@ -24,7 +26,8 @@ WheelVision is a metadata-driven preview platform for wheel and tyre configurati
   - components/: experience shell, configurator sidebar, canvas panel, quote button.
 - components/: shared UI primitives and providers.
   - ui/: the design system used by the dealer experience.
-- lib/: shared utilities (structured logger).
+- lib/: shared utilities (structured logger, class combiner, deep-freeze).
+  - lib/money/: the currency registry (ISO-4217) and CLDR formatting — the only place currency knowledge lives; nothing hardcodes a symbol.
 - config/: runtime configuration and environment validation (single source).
 - types/: shared domain and API contracts (catalog DTOs, Chapter-6 render metadata).
 - prisma/: schema, migrations and idempotent seed.
@@ -60,9 +63,9 @@ the catalog + engine without touching either:
   and ≥44px touch-friendly; no feature duplicates styling.
 - features/preview/state/: the PreviewStore (Zustand) owns only the current
   selection (vehicle, colour, wheel, finish, size, tyre, profile) plus
-  renderer settings; it persists to localStorage with versioned migrations
-  (refresh restores everything). Saved configurations sit behind a
-  ConfigurationStorage interface (localStorage now, backend sync later).
+    renderer settings; it persists to localStorage with versioned migrations
+    (refresh restores everything). Saved configurations sit behind a
+    ConfigurationStorage interface (localStorage now, backend sync later).
 - features/preview/selection/: pure facet/filter domain modules (every
   dimension filterable: manufacturer, model, year, colour, brand, finish,
   width, diameter, offset, bolt pattern) plus one-responsibility selector

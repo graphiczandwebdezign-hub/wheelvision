@@ -1,5 +1,8 @@
 import type { PrismaClient } from '@prisma/client';
 import { BaseRepository, type RepositoryTransaction } from '@/server/repositories/base-repository';
+import { formatQuoteNumber } from '@/server/quote/quote-number';
+import { PRISMA_UNIQUE_VIOLATION, QUOTE_NUMBER_MAX_RETRIES } from '@/server/quote/quote-terms';
+import { AppError, isPrismaErrorCode } from '@/server/utils/errors';
 import { toSkipTake, type PaginatedResult, type PaginationParams } from '@/server/utils/pagination';
 import type { QuoteStatus } from '@/types/quote';
 
@@ -13,9 +16,18 @@ import type { QuoteStatus } from '@/types/quote';
  *   protected by the `(tenantId, quoteNumber)` unique index.
  * - Quote content is immutable after creation; the only lifecycle write is
  *   `status` (ISSUED → ARCHIVED).
+ *
+ * Because the counter increment and the insert share one transaction, a
+ * unique-violation (P2002 — e.g. legacy rows colliding) rolls the counter
+ * back too; creation retries with a fresh sequence up to
+ * QUOTE_NUMBER_MAX_RETRIES before surfacing an error. Concurrent creations
+ * are serialised by PostgreSQL's row lock on the tenant counter, so numbers
+ * are sequential, gap-light and collision-safe by construction.
  */
 
 export interface QuoteLineInsert {
+  /** Service pre-generates ids so the snapshot and the rows stay identical. */
+  readonly id: string;
   readonly category: string;
   readonly description: string;
   readonly quantity: number;
@@ -27,19 +39,24 @@ export interface QuoteLineInsert {
 
 export interface CreateQuoteRecordInput {
   readonly tenantId: string;
-  readonly quoteNumber: string;
+  /** Issue timestamp — the quote number derives from it (and the counter). */
+  readonly issuedAt: Date;
   readonly customer: {
     readonly name: string;
     readonly email: string | null;
     readonly phone: string | null;
   };
-  /** FK anchors for the legacy required relations. */
+  /**
+   * FK anchors for the legacy required relations. The SavedConfiguration is
+   * system-managed: it is named `Quote {quoteNumber}` inside the creation
+   * transaction so the (tenantId, name) unique constraint is satisfied by
+   * construction.
+   */
   readonly configuration: {
     readonly vehicleVariantId: string;
     readonly vehicleModelId: string;
     readonly wheelModelId: string;
     readonly tyreModelId: string;
-    readonly name: string;
   };
   readonly consultantName: string | null;
   readonly currency: string;
@@ -50,6 +67,11 @@ export interface CreateQuoteRecordInput {
   readonly totalCents: number;
   readonly validUntil: Date;
   readonly lines: readonly QuoteLineInsert[];
+  /**
+   * Serialised QuoteSnapshotPayload with a placeholder `quoteNumber` — the
+   * repository replaces that field with the number allocated inside the
+   * creation transaction so the snapshot always carries the truth.
+   */
   readonly snapshotPayload: unknown;
 }
 
@@ -111,7 +133,31 @@ export class QuoteRepository extends BaseRepository implements QuoteRepositoryPo
   }
 
   async createQuote(input: CreateQuoteRecordInput): Promise<QuoteRecord> {
-    return this.withTransaction((tx) => this.createQuoteInTransaction(tx, input));
+    for (let attempt = 1; attempt <= QUOTE_NUMBER_MAX_RETRIES; attempt += 1) {
+      try {
+        return await this.withTransaction((tx) => this.createQuoteInTransaction(tx, input));
+      } catch (error) {
+        if (
+          isPrismaErrorCode(error, PRISMA_UNIQUE_VIOLATION) &&
+          attempt < QUOTE_NUMBER_MAX_RETRIES
+        ) {
+          continue; // counter rolled back with the transaction — retry with a fresh one
+        }
+        if (isPrismaErrorCode(error, PRISMA_UNIQUE_VIOLATION)) {
+          throw new AppError('Could not allocate a unique quote number', {
+            code: 'INTERNAL_ERROR',
+            statusCode: 500,
+            details: { attempts: attempt },
+          });
+        }
+        throw error;
+      }
+    }
+    // Unreachable: the loop either returns or throws. Kept for the checker.
+    throw new AppError('Could not allocate a unique quote number', {
+      code: 'INTERNAL_ERROR',
+      statusCode: 500,
+    });
   }
 
   /**
@@ -122,12 +168,14 @@ export class QuoteRepository extends BaseRepository implements QuoteRepositoryPo
     tx: RepositoryTransaction,
     input: CreateQuoteRecordInput,
   ): Promise<QuoteRecord> {
-    // Atomic sequence allocation — PostgreSQL serialises this UPDATE.
-    await tx.tenant.update({
+    // Atomic sequence allocation — PostgreSQL serialises this UPDATE; the
+    // bumped value is the quote's sequence inside the same transaction.
+    const tenantCounter = await tx.tenant.update({
       where: { id: input.tenantId },
       data: { quoteSequence: { increment: 1 } },
-      select: { id: true },
+      select: { quoteSequence: true },
     });
+    const quoteNumber = formatQuoteNumber(tenantCounter.quoteSequence, input.issuedAt);
 
     const customer = input.customer.email
       ? await tx.customer.upsert({
@@ -146,7 +194,7 @@ export class QuoteRepository extends BaseRepository implements QuoteRepositoryPo
         vehicleModelId: input.configuration.vehicleModelId,
         wheelModelId: input.configuration.wheelModelId,
         tyreModelId: input.configuration.tyreModelId,
-        name: input.configuration.name,
+        name: `Quote ${quoteNumber}`,
       },
     });
 
@@ -156,7 +204,7 @@ export class QuoteRepository extends BaseRepository implements QuoteRepositoryPo
         customerId: customer.id,
         savedConfigurationId: configuration.id,
         status: 'ISSUED',
-        quoteNumber: input.quoteNumber,
+        quoteNumber,
         consultantName: input.consultantName,
         currency: input.currency,
         // Legacy decimal column (required) stays populated in lockstep.
@@ -168,7 +216,15 @@ export class QuoteRepository extends BaseRepository implements QuoteRepositoryPo
         validUntil: input.validUntil,
         lines: { create: [...input.lines] },
         snapshot: {
-          create: { tenantId: input.tenantId, payload: input.snapshotPayload as object },
+          create: {
+            tenantId: input.tenantId,
+            payload: {
+              ...(typeof input.snapshotPayload === 'object' && input.snapshotPayload !== null
+                ? (input.snapshotPayload as Record<string, unknown>)
+                : {}),
+              quoteNumber,
+            },
+          },
         },
       },
       include: quoteInclude,

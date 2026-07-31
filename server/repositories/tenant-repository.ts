@@ -14,4 +14,12 @@ export class TenantRepository extends BaseRepository implements TenantLookup {
     });
     return tenant?.id ?? null;
   }
+
+  /** Dealer identity for quotes/snapshots (id ↔ name ↔ slug). */
+  async findById(id: string): Promise<{ id: string; name: string; slug: string } | null> {
+    return this.prisma.tenant.findUnique({
+      where: { id },
+      select: { id: true, name: true, slug: true },
+    });
+  }
 }

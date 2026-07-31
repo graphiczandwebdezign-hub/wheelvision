@@ -5,7 +5,13 @@ import { Badge, ToastViewport, Toolbar, toast, useToastStore } from '@/component
 import { useOnlineStatus } from '@/features/preview/hooks/use-online-status';
 import { usePreviewStore } from '@/features/preview/state/preview-store';
 import { ConfiguratorSidebar } from '@/features/preview/components/configurator-sidebar';
+import { ConsultantMenu } from '@/features/preview/components/consultant-menu';
+import { PrintSheet } from '@/features/preview/components/print-sheet';
 import { VehiclePreview } from '@/features/preview/components/vehicle-preview';
+import { useConfigurationLinkSync } from '@/features/preview/hooks/use-configuration-link';
+import { QuoteDialog } from '@/features/quotes/components/quote-dialog';
+import { QuoteHistory } from '@/features/quotes/components/quote-history';
+import { useQuoteLinkSync } from '@/features/quotes/hooks/use-quote-link';
 import { vehicleDisplayName } from '@/features/preview/selection/vehicle-facets';
 import { usePreviewSelection } from '@/features/preview/hooks/use-preview-selection';
 
@@ -19,6 +25,8 @@ import { usePreviewSelection } from '@/features/preview/hooks/use-preview-select
  * offline dealer keeps configuring and React Query resumes on its own.
  */
 export function PreviewExperience() {
+  useConfigurationLinkSync();
+  useQuoteLinkSync();
   const online = useOnlineStatus();
   const selection = usePreviewSelection();
   const vehicleLabel = usePreviewStore((state) => state.vehicleId);
@@ -61,6 +69,7 @@ export function PreviewExperience() {
         }
         end={
           <div className="flex items-center gap-2">
+            <ConsultantMenu />
             {vehicleLabel ? <Badge tone="success">Configuring</Badge> : <Badge>Ready</Badge>}
             {online ? (
               <Badge tone="success">Online</Badge>
@@ -75,6 +84,9 @@ export function PreviewExperience() {
         <ConfiguratorSidebar />
       </div>
       <ToastViewport />
+      <QuoteDialog />
+      <QuoteHistory />
+      <PrintSheet />
     </div>
   );
 }

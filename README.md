@@ -118,6 +118,42 @@ Conventions:
   400 `VALIDATION_ERROR`, 404 `TENANT_NOT_FOUND` / `NOT_FOUND`, 500 `INTERNAL_ERROR`.
 - Full contract: [`docs/api/catalog-api.md`](docs/api/catalog-api.md).
 
+## Quote engine (Sprint 8)
+
+A completed configuration on `/preview` becomes a **professional quotation**:
+the dealer taps **Generate Quote**, confirms the customer, and the server
+prices the package (wheels, tyres, fitment, balancing, alignment), applies
+the tenant's price book, computes VAT, and issues an immutable, numbered
+quotation (`WV-2026-000001`) the dealer can print, share or recall.
+
+| Endpoint                        | Description                                                        |
+| ------------------------------- | ------------------------------------------------------------------ |
+| `POST /api/quotes`              | Issue a quotation from a completed seven-field configuration (201) |
+| `GET /api/quotes`               | Paginated quote history (newest first, `status` filter)            |
+| `GET /api/quotes/:id`           | Full quote detail: lines, totals, immutable snapshot               |
+| `POST /api/quotes/:id/duplicate`| Re-issue from the snapshot at current pricing (new number)         |
+| `POST /api/quotes/:id/archive`  | Transition `ISSUED → ARCHIVED` (content untouched)                 |
+
+Principles:
+
+- **Server-side pricing only** — the UI never computes money; it sends the
+  raw configuration and renders the issued result. No placeholder pricing:
+  an unpriced selection fails loudly (`400` + `missingPrices`).
+- **Immutable quotes** — lines, totals and the versioned snapshot
+  (`QuoteSnapshot.payload`) never change after issue; catalog price changes
+  never alter history. Duplicate re-prices under a fresh number.
+- **Sequential numbering** — `WV-<year>-<seq>` allocated atomically inside
+  the creation transaction (tenant counter + unique index, collision-retry).
+- **Tax/currency seams** — SA VAT 15% behind a `TaxStrategy` registry; ZAR
+  via a currency registry with `Intl.NumberFormat` — no hardcoded symbols.
+- Quotations only: no invoicing, payments or PDFs (browser print only).
+
+Docs: [Quote API](docs/api/quotes-api.md) ·
+[Quote domain](docs/quotes/quote-domain.md) ·
+[Pricing engine](docs/quotes/pricing-engine.md) ·
+[Sequence diagrams](docs/quotes/sequence-diagrams.md) ·
+[ERD](docs/database/erd.md).
+
 ## Frontend data flow
 
 ```
@@ -178,7 +214,7 @@ primitives in [`components/ui/`](components/ui):
 Vehicle (search + manufacturer → model → year → colour)
    → Wheels (search + brand → model → finish → fitment filters → size)
    → Tyres  (search + brand → pattern → width → profile → diameter)
-   → Save Configuration (localStorage) / Reset / Generate Quote (disabled, Sprint 8)
+   → Save Configuration (localStorage) / Reset / Generate Quote (live, Sprint 8)
 ```
 
 - **Data flow:** React Query → selection panels write only to the Zustand
@@ -206,9 +242,11 @@ Vehicle (search + manufacturer → model → year → colour)
 
 ## Project structure
 
-- `app/` — Next.js App Router entry points and API route re-exports
+- `app/` — Next.js App Router entry points and API route re-exports (incl. `app/api/quotes/`)
 - `server/` — API backend layers (controllers, services, repositories, validators, tenant context)
+  - `quote/` — quote domain core: money kernel, tax strategy, totals pipeline, quote builder, numbering, terms (pure, fully unit tested)
 - `features/catalog/` — frontend catalog data layer (api client, React Query hooks, query keys, types barrel)
+- `features/quotes/` — quote workspace data + UI: typed `/api/quotes*` client, query keys, React Query hooks, share payloads, workspace/history/print components
 - `features/preview/` — preview feature consuming the catalog hooks
   - `engine/` — the metadata-driven rendering engine (math, asset loading, render context, scene composition, layers, provider, canvas)
   - `state/` — PreviewStore (Zustand, persisted), configuration storage (v2, owner-scoped), consultant profiles, share links, validation notices
@@ -218,13 +256,14 @@ Vehicle (search + manufacturer → model → year → colour)
 - `components/` — shared UI providers and primitives
   - `ui/` — the design system (button, card, panel, select, combobox, search box, badge, tabs, accordion, skeletons, states, toolbar, sidebar, dialog, popover, toasts)
 - `config/` — runtime configuration and environment validation (single source)
-- `lib/` — shared utilities (structured logger, `cn` class combiner)
-- `types/` — shared domain/API contracts (catalog DTOs, render metadata)
+- `lib/` — shared utilities (structured logger, `cn` class combiner, deep-freeze guard)
+  - `money/` — currency registry and CLDR formatting (the only currency knowledge)
+- `types/` — shared domain/API contracts (catalog DTOs, quote DTOs, render metadata)
 - `prisma/` — schema, migrations and seed
 - `vehicles/` — authored vehicle asset packages (`metadata.json` is the vehicle source of truth the seed validates and stores)
 - `public/vehicles/` — generated development assets the packages resolve to (`npm run assets:generate`)
 - `scripts/` — repository scripts (development asset generation)
-- `docs/` — product and engineering documentation (architecture, ADRs, API contracts, rendering engine, dealer experience)
+- `docs/` — product and engineering documentation (architecture, ADRs, API contracts, rendering engine, dealer experience, quote domain/pricing/flows, database ERD)
 - `tests/` — unit and end-to-end coverage (`tests/helpers/` holds shared fixtures)
 
 See `docs/architecture/` for the full architecture specification and

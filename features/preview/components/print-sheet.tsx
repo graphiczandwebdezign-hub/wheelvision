@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { usePreviewSelection } from '@/features/preview/hooks/use-preview-selection';
 import { buildConfigurationRows } from '@/features/preview/selection/configuration-rows';
 import { useConsultantStore } from '@/features/preview/state/consultant-store';
+import { useQuoteUiStore } from '@/features/quotes/state/quote-ui-store';
 
 /**
  * Print-only customer handout — groundwork for the Sprint 8 quote document.
@@ -18,6 +19,9 @@ import { useConsultantStore } from '@/features/preview/state/consultant-store';
  */
 export function PrintSheet() {
   const selection = usePreviewSelection();
+  // While the quote workspace is open its own document owns the paper —
+  // the paper never mixes a quotation with the configuration handout.
+  const quoteWorkspaceOpen = useQuoteUiStore((state) => state.open);
   const activeId = useConsultantStore((state) => state.activeId);
   const profiles = useConsultantStore((state) => state.profiles);
   const consultantName = profiles.find((profile) => profile.id === activeId)?.name ?? null;
@@ -30,6 +34,10 @@ export function PrintSheet() {
   }, []);
 
   const rows = buildConfigurationRows(selection);
+
+  if (quoteWorkspaceOpen) {
+    return null;
+  }
 
   return (
     <section

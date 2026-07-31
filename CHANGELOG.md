@@ -1,5 +1,121 @@
 # Changelog
 
+## [1.8.0] - 2026-07-31
+
+### Added — the Commercial Quote Engine
+
+WheelVision graduates from configurator to dealership sales platform: a
+completed configuration now issues a **priced, immutable, printable and
+shareable quotation** — all money computed server-side, all content frozen
+at issue.
+
+- **Quote domain core** (`server/quote/`, pure and fully unit tested):
+  - `money.ts` — the money kernel: integer cents, basis-point percentages,
+    half-up rounding, zero-floored line totals and capped discounts.
+  - `tax/tax-strategy.ts` — `TaxStrategy` seam with South African VAT (15%,
+    1500 bp) first in an ISO country registry; adding a country never
+    rewrites the engine. Strategy code/name/rate persist into snapshots.
+  - `totals/quote-lines.ts` — the bill of quantities (4 wheels, 4 tyres,
+    fitment + balancing per wheel, alignment per vehicle) with stable
+    presentation order by category then description; every missing price is
+    collected into `missingPrices` (never a placeholder).
+  - `totals/compute-totals.ts` — the deterministic totals pipeline: line
+    totals → price rules (category/brand-scoped, priority-ordered) →
+    subtotal → discount rules (compounding, category-aware, capped, each
+    application recorded) → VAT on the discounted amount → grand total.
+  - `quote-number.ts` — `WV-<issueYear>-<sixDigits>` formatting/parsing.
+  - `quote-terms.ts` — domain constants (30-day validity, retry budget,
+    P2002) plus the six standard T&Cs and the "not an invoice" disclaimer.
+  - `quote-builder.ts` — assembles the immutable `QuoteDetail` DTO and the
+    versioned snapshot payload (parties, configuration, vehicle/wheel/tyre
+    detail + render metadata, asset references, pricing incl. tax, totals).
+- **PricingService** (`server/services/pricing-service.ts` +
+  `server/repositories/pricing-repository.ts`): resolves the tenant's
+  default price list, size/profile-specific wheel/tyre prices (qualified
+  rows win over model-wide), the labour rate card, active price/discount
+  rules, then runs the pure pipeline. Unpriced selections fail loudly
+  (`400` + `missingPrices`); the price list's currency gates the
+  computation through `lib/money/currency.ts`, the ISO-4217 registry and
+  CLDR (`Intl.NumberFormat`) formatting — no hardcoded symbol anywhere.
+- **QuoteService** (`server/services/quote-service.ts`): seven-field
+  completeness check (`400` naming `missingFields`), catalog membership
+  checks (colour/finish/size/profile belong to their parents), tenant-safe
+  entity resolution (404 for foreign ids), line id pre-generation so
+  snapshot lines and persisted rows are twins, `duplicate` (re-price from
+  the snapshot under a fresh number) and `archive` (the only lifecycle
+  write). Snapshot payloads are deep-frozen on the way out.
+- **QuoteRepository** (`server/repositories/quote-repository.ts`):
+  sequential quote numbers (`WV-2026-000001`…) allocated **atomically
+  inside the creation transaction** via the tenant's `quoteSequence`
+  counter and backstopped by `@@unique([tenantId, quoteNumber])` — a P2002
+  collision rolls the counter back with the transaction and retries (≤3).
+  Customer upsert by `(tenantId, email)`, system-managed SavedConfiguration
+  anchor named `Quote <number>`, legacy `totalAmount` mirrored.
+- **Database (additive migration `20260731150000_quote_domain`)**: new
+  `PriceList`, `PriceRule`, `WheelPrice`, `TyrePrice`, `LabourPrice`,
+  `DiscountRule`, `QuoteLine`, `QuoteSnapshot` tables; `Quote` gains
+  `quoteNumber` (unique per tenant), `consultantName`, `currency`,
+  `subtotalCents`, `discountCents`, `vatBasisPoints`, `vatCents`,
+  `validUntil`, `archivedAt`; `Tenant.quoteSequence` counter. Zero
+  destructive changes.
+- **Quote API** (`/api/quotes*`): `POST /api/quotes` (201), `GET
+  /api/quotes` (paginated, `status` filter), `GET /api/quotes/:id`,
+  `POST /api/quotes/:id/duplicate` (201), `POST /api/quotes/:id/archive` —
+  thin controllers over the services, zod at the boundary, standard
+  envelopes; tenant scoping throughout (foreign ids are 404s).
+- **Quote workspace UI** (`features/quotes/`): typed API client, query
+  keys, React Query hooks; compose dialog (resolved package review,
+  customer capture with local zod validation, consultant prefill from the
+  active profile, `missingPrices` surfacing); immutable view (summary,
+  line items, totals, share transports, lifecycle actions); quote history
+  (status filter, pagination, open/duplicate/archive per row); share
+  payloads (copy-link `?quote=` deep link consumed once by
+  `useQuoteLinkSync`, mailto, WhatsApp, clipboard — degrading gracefully);
+  print-only professional quotation document (dealer branding, parties,
+  package, lines, VAT, totals, validity, six T&Cs, disclaimer, reference,
+  QR-code placeholder) via the browser print pipeline.
+- **Seeded price book**: default retail price list (ZAR), size-specific
+  wheel prices (`17x8` → R 2 950,00, `18x8.5` → R 3 450,00),
+  profile-specific tyre prices (`205/55 R16` → R 2 150,00, `225/60 R17` →
+  R 2 650,00) and the labour rate card (fitment R 250,00/wheel, balancing
+  R 150,00/wheel, alignment R 950,00/vehicle) — the demo Hilux package
+  quotes end-to-end.
+
+### Changed
+
+- `/preview`: **Generate Quote** is live — enabled once all seven fields
+  are chosen (and online, with an explanatory hint otherwise); opens the
+  quote workspace. **View quote history** recalls the tenant's quotations.
+  The configuration handout printing defers to the quotation document while
+  the quote workspace is open.
+- `VehicleDetail` extends additively with `vehicleModelId` (needed for the
+  quote's SavedConfiguration FK anchor; no consumer breakage).
+- `features/catalog/api/client.ts` adds the `postDetail` mutation path and
+  generic query-param forwarding (still the only fetch boundary).
+- `TenantRepository.findById` supports the dealer block on quotations.
+- e2e dealer flow now walks the seeded catalog into an issued quotation
+  (compose → issue → view → history), alongside the save/restore and
+  shared-link flows.
+
+### Documentation
+
+- New: `docs/api/quotes-api.md`, `docs/quotes/quote-domain.md`,
+  `docs/quotes/pricing-engine.md` (incl. tax strategy + currency
+  abstraction), `docs/quotes/sequence-diagrams.md`, `docs/database/erd.md`.
+- README gains the quote engine section and refreshed structure;
+  ARCHITECTURE maps `server/quote/`, `features/quotes/` and `lib/money/`.
+
+### Tests
+
+- +143 specs, +13 files — **506 passing across 53 files** (up from
+  363/40): money kernel, currency registry, tax strategy, totals pipeline,
+  pricing service, quote builder/snapshot, repository incl. 50-way
+  concurrent numbering + P2002 retry/exhaustion, service orchestration
+  (completeness/membership/immutability/duplicate), validators, share
+  payloads, workspace store/link, API slice (envelopes/status/validation/
+  tenant scoping) and the workspace UI (compose → issue → view/history/
+  print/share), plus the live Generate Quote behaviour in the summary.
+
 ## [1.7.0] - 2026-07-31
 
 ### Added

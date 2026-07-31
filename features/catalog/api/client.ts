@@ -39,12 +39,17 @@ function isErrorEnvelope(body: unknown): body is ApiErrorEnvelope {
   );
 }
 
-async function request<TBody>(path: string): Promise<TBody> {
+async function request<TBody>(path: string, init?: RequestInit): Promise<TBody> {
   let response: Response;
 
   try {
     response = await fetch(`/api${path}`, {
-      headers: { accept: 'application/json' },
+      ...init,
+      headers: {
+        accept: 'application/json',
+        ...(init?.body ? { 'content-type': 'application/json' } : {}),
+        ...init?.headers,
+      },
     });
   } catch (cause) {
     throw new ApiClientError('The catalog service is unreachable', 0, 'NETWORK_ERROR', null);
@@ -65,10 +70,14 @@ async function request<TBody>(path: string): Promise<TBody> {
   return body as TBody;
 }
 
-function withSearchParams(path: string, params?: CatalogListParams): string {
+function withSearchParams<TParams extends object>(path: string, params?: TParams): string {
   const search = new URLSearchParams();
-  if (params?.page !== undefined) search.set('page', String(params.page));
-  if (params?.pageSize !== undefined) search.set('pageSize', String(params.pageSize));
+  const entries: Record<string, unknown> = { ...params };
+  for (const [key, value] of Object.entries(entries)) {
+    if (value !== undefined && value !== null && value !== '') {
+      search.set(key, String(value));
+    }
+  }
   const query = search.toString();
   return query ? `${path}?${query}` : path;
 }
@@ -83,5 +92,14 @@ export async function getList<T>(
 
 export async function getDetail<T>(path: string): Promise<T> {
   const envelope = await request<ApiDetailEnvelope<T>>(path);
+  return envelope.data;
+}
+
+/** Command helper: POST (with an optional JSON body) resolving the detail envelope. */
+export async function postDetail<T>(path: string, body?: unknown): Promise<T> {
+  const envelope = await request<ApiDetailEnvelope<T>>(path, {
+    method: 'POST',
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
   return envelope.data;
 }

@@ -20,6 +20,16 @@ export interface AppErrorOptions {
   details?: Record<string, unknown>;
 }
 
+/** Prisma request failures carry a stable engine code (e.g. P2002 unique violation). */
+export function isPrismaErrorCode(error: unknown, code: string): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { code?: unknown }).code === code
+  );
+}
+
 export class AppError extends Error {
   public readonly code: ErrorCode;
   public readonly statusCode: number;

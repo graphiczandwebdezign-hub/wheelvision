@@ -72,6 +72,10 @@ export interface SeedClient {
   tyreProfile: SeedDelegate;
   savedConfiguration: SeedDelegate;
   customer: SeedDelegate;
+  priceList: SeedDelegate;
+  wheelPrice: SeedDelegate;
+  tyrePrice: SeedDelegate;
+  labourPrice: SeedDelegate;
 }
 
 export async function seedDatabase(prisma: SeedClient): Promise<void> {
@@ -183,12 +187,14 @@ export async function seedDatabase(prisma: SeedClient): Promise<void> {
     },
   ];
 
+  const wheelSizeIds = new Map<string, string>();
   for (const spec of wheelSizes) {
-    await prisma.wheelSize.upsert({
+    const row = await prisma.wheelSize.upsert({
       where: { tenantId_size: { tenantId, size: spec.size } },
       create: { tenantId, wheelModelId: wheelModel.id, ...spec },
       update: { wheelModelId: wheelModel.id, ...spec },
     });
+    wheelSizeIds.set(spec.size, row.id);
   }
 
   const tyreBrand = await prisma.tyreBrand.upsert({
@@ -231,8 +237,9 @@ export async function seedDatabase(prisma: SeedClient): Promise<void> {
     },
   ];
 
+  const tyreProfileIds = new Map<string, string>();
   for (const spec of tyreProfiles) {
-    await prisma.tyreProfile.upsert({
+    const row = await prisma.tyreProfile.upsert({
       where: {
         tenantId_tyreModelId_profile: {
           tenantId,
@@ -242,6 +249,96 @@ export async function seedDatabase(prisma: SeedClient): Promise<void> {
       },
       create: { tenantId, tyreModelId: tyreModel.id, ...spec },
       update: { ...spec },
+    });
+    tyreProfileIds.set(spec.profile, row.id);
+  }
+
+  // -----------------------------------------------------------------------
+  // Quote domain price book (Sprint 8): the default retail price list and
+  // the size/profile-specific unit prices and labour rate card the Pricing
+  // Service resolves from. Rows without a natural unique key carry fixed
+  // seed UUIDs so reseeding stays idempotent via upsert-on-id.
+  // -----------------------------------------------------------------------
+
+  const priceList = await prisma.priceList.upsert({
+    where: { tenantId_name: { tenantId, name: 'Retail Price List' } },
+    create: {
+      name: 'Retail Price List',
+      tenantId,
+      kind: 'RETAIL',
+      currency: 'ZAR',
+      isDefault: true,
+      active: true,
+    },
+    update: { kind: 'RETAIL', currency: 'ZAR', isDefault: true, active: true },
+  });
+
+  const wheelPrices = [
+    { id: '5eed0000-0000-4000-8000-000000000011', size: '17x8', amountCents: 295000 },
+    { id: '5eed0000-0000-4000-8000-000000000012', size: '18x8.5', amountCents: 345000 },
+  ];
+  for (const price of wheelPrices) {
+    await prisma.wheelPrice.upsert({
+      where: { id: price.id },
+      create: {
+        id: price.id,
+        tenantId,
+        priceListId: priceList.id,
+        wheelModelId: wheelModel.id,
+        wheelSizeId: wheelSizeIds.get(price.size) ?? null,
+        amountCents: price.amountCents,
+      },
+      update: {
+        tenantId,
+        priceListId: priceList.id,
+        wheelModelId: wheelModel.id,
+        wheelSizeId: wheelSizeIds.get(price.size) ?? null,
+        amountCents: price.amountCents,
+      },
+    });
+  }
+
+  const tyrePrices = [
+    { id: '5eed0000-0000-4000-8000-000000000021', profile: '205/55 R16', amountCents: 215000 },
+    { id: '5eed0000-0000-4000-8000-000000000022', profile: '225/60 R17', amountCents: 265000 },
+  ];
+  for (const price of tyrePrices) {
+    await prisma.tyrePrice.upsert({
+      where: { id: price.id },
+      create: {
+        id: price.id,
+        tenantId,
+        priceListId: priceList.id,
+        tyreModelId: tyreModel.id,
+        tyreProfileId: tyreProfileIds.get(price.profile) ?? null,
+        amountCents: price.amountCents,
+      },
+      update: {
+        tenantId,
+        priceListId: priceList.id,
+        tyreModelId: tyreModel.id,
+        tyreProfileId: tyreProfileIds.get(price.profile) ?? null,
+        amountCents: price.amountCents,
+      },
+    });
+  }
+
+  const labourPrices = [
+    { serviceType: 'FITMENT', unit: 'PER_WHEEL', amountCents: 25000 },
+    { serviceType: 'BALANCING', unit: 'PER_WHEEL', amountCents: 15000 },
+    { serviceType: 'ALIGNMENT', unit: 'PER_VEHICLE', amountCents: 95000 },
+  ];
+  for (const rate of labourPrices) {
+    await prisma.labourPrice.upsert({
+      where: {
+        priceListId_serviceType_unit: {
+          priceListId: priceList.id,
+          serviceType: rate.serviceType,
+          unit: rate.unit,
+        },
+      },
+      create: { tenantId, priceListId: priceList.id, ...rate },
+      update: { amountCents: rate.amountCents },
     });
   }
 

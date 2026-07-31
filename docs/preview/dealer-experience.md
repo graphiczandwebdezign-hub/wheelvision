@@ -35,7 +35,8 @@ Tyres step                                                             │
   Exact profile spec resolves → renderer updates proportions           │
   ▼                                                                   │
 Save Configuration (localStorage) ── Saved list ── Reset ── Generate
-Quote (disabled, “Available in Sprint 8”)
+Quote (live since Sprint 8 — enabled once the seven-field selection is
+complete, opens the quote workspace; see docs/quotes/quote-domain.md)
 ```
 
 Every intermediate step writes to the **PreviewStore**; the rendered
@@ -205,8 +206,10 @@ order), the active consultant's name (or "Showroom kiosk"), and a timestamp
 that refreshes on the browser's `beforeprint` event so paper shows the
 actual print moment (`suppressHydrationWarning` covers the one intentional
 server/client clock difference). The footer says plainly that the handout
-is **not a quotation** — pricing arrives with the Sprint 8 quote engine, of
-which this is the groundwork. Where a browser offers no print pipeline, the
+is **not a quotation** — the priced, immutable quotation document now lives
+in the Sprint 8 quote workspace (`features/quotes/components/quote-print`),
+which supersedes this handout's pricing role while the handout remains the
+quick configuration summary. Where a browser offers no print pipeline, the
 action degrades to an explanatory toast instead of crashing.
 
 ---
@@ -287,5 +290,6 @@ styling anywhere in the feature layer.
   SearchBox stops propagation when it clears so a surrounding dialog stays
   open mid-search).
 - Every control is labelled (visible label or `aria-label`), focus rings
-  are always visible, and the disabled quote button explains itself via
+  are always visible, and while the selection is incomplete the
+  now-live Generate Quote button stays disabled and explains itself via
   `aria-describedby` plus visible hint text.

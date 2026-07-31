@@ -32,6 +32,21 @@ export class VehicleService extends BaseService<VehicleRepositoryPort> {
     };
   }
 
+  /**
+   * FK anchors the quote domain persists on SavedConfiguration
+   * (variant + owning model). 404s identically to `getVehicle`.
+   */
+  async getVehicleAnchors(
+    tenantId: string,
+    id: string,
+  ): Promise<{ vehicleVariantId: string; vehicleModelId: string }> {
+    const record = await this.repository.findById(tenantId, id);
+    if (!record) {
+      throw AppError.notFound('Vehicle not found', { vehicleId: id });
+    }
+    return { vehicleVariantId: record.id, vehicleModelId: record.vehicleModelId };
+  }
+
   private toSummary(record: {
     id: string;
     name: string;

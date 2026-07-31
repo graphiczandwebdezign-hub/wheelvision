@@ -5,6 +5,8 @@ import { toSkipTake, type PaginatedResult, type PaginationParams } from '@/serve
 /** Shape of the vehicle variant records this repository returns (with relations). */
 export interface VehicleVariantRecord {
   id: string;
+  /** FK anchor for SavedConfiguration writes (quote domain). */
+  vehicleModelId: string;
   name: string;
   year: number | null;
   wheelDiameterMm: number;

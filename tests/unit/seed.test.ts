@@ -55,6 +55,10 @@ function createFakeSeedClient() {
     tyreProfile: delegate('tyreProfile'),
     savedConfiguration: delegate('savedConfiguration'),
     customer: delegate('customer'),
+    priceList: delegate('priceList'),
+    wheelPrice: delegate('wheelPrice'),
+    tyrePrice: delegate('tyrePrice'),
+    labourPrice: delegate('labourPrice'),
   };
 
   return { client, stores };
@@ -75,6 +79,10 @@ const EXPECTED_SIZES: Record<string, number> = {
   tyreProfile: 2,
   savedConfiguration: 1,
   customer: 1,
+  priceList: 1,
+  wheelPrice: 2,
+  tyrePrice: 2,
+  labourPrice: 3,
 };
 
 describe('database seed', () => {
@@ -136,5 +144,54 @@ describe('database seed', () => {
     expect([...stores.tyreProfile.values()].every((p) => p.tyreModelId === tyreModel.id)).toBe(
       true,
     );
+  });
+
+  it('seeds a complete retail price book for the quote domain', async () => {
+    const { client, stores } = createFakeSeedClient();
+
+    await seedDatabase(client);
+
+    const tenantId = [...stores.tenant.values()][0].id;
+    const priceList = [...stores.priceList.values()][0];
+    const wheelModel = [...stores.wheelModel.values()][0];
+    const tyreModel = [...stores.tyreModel.values()][0];
+    const wheelSizes = [...stores.wheelSize.values()];
+    const tyreProfiles = [...stores.tyreProfile.values()];
+
+    expect(priceList).toMatchObject({
+      tenantId,
+      name: 'Retail Price List',
+      kind: 'RETAIL',
+      currency: 'ZAR',
+      isDefault: true,
+      active: true,
+    });
+
+    const wheelPrices = [...stores.wheelPrice.values()];
+    expect(wheelPrices.every((p) => p.priceListId === priceList.id)).toBe(true);
+    expect(wheelPrices.every((p) => p.wheelModelId === wheelModel.id)).toBe(true);
+    expect(wheelPrices.map((p) => p.wheelSizeId).sort()).toEqual(
+      wheelSizes.map((size) => size.id).sort(),
+    );
+    expect(
+      wheelPrices.map((p) => p.amountCents).sort((a, b) => (a as number) - (b as number)),
+    ).toEqual([295000, 345000]);
+
+    const tyrePrices = [...stores.tyrePrice.values()];
+    expect(tyrePrices.every((p) => p.priceListId === priceList.id)).toBe(true);
+    expect(tyrePrices.map((p) => p.tyreProfileId).sort()).toEqual(
+      tyreProfiles.map((profile) => profile.id).sort(),
+    );
+    expect(
+      tyrePrices.map((p) => p.amountCents).sort((a, b) => (a as number) - (b as number)),
+    ).toEqual([215000, 265000]);
+
+    const labour = [...stores.labourPrice.values()];
+    expect(labour).toHaveLength(3);
+    expect(labour.every((rate) => rate.priceListId === priceList.id)).toBe(true);
+    const byService = Object.fromEntries(labour.map((rate) => [rate.serviceType, rate]));
+    expect(byService.FITMENT).toMatchObject({ unit: 'PER_WHEEL', amountCents: 25000 });
+    expect(byService.BALANCING).toMatchObject({ unit: 'PER_WHEEL', amountCents: 15000 });
+    expect(byService.ALIGNMENT).toMatchObject({ unit: 'PER_VEHICLE', amountCents: 95000 });
   });
 });

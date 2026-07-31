@@ -10,6 +10,7 @@ import {
 import { createLocalConsultantProfileStorage } from '@/features/preview/state/consultant-profiles';
 import { useConsultantStore } from '@/features/preview/state/consultant-store';
 import { usePreviewStore } from '@/features/preview/state/preview-store';
+import { useQuoteUiStore } from '@/features/quotes/state/quote-ui-store';
 import { useValidationNoticeStore } from '@/features/preview/state/validation-notices';
 import { resetToastIds, useToastStore } from '@/components/ui/toast-store';
 import { hiluxDetail, ps4Detail, te37Detail } from '../helpers/catalog-fixtures';
@@ -54,6 +55,7 @@ describe('ConfigurationSummary', () => {
       hydrated: true,
     });
     useValidationNoticeStore.getState().dismiss();
+    useQuoteUiStore.setState({ open: false, quoteId: null, historyOpen: false });
     useToastStore.getState().clear();
     resetToastIds();
     vi.mocked(getVehicle).mockReset().mockResolvedValue(hiluxDetail);
@@ -192,15 +194,37 @@ describe('ConfigurationSummary', () => {
     );
   });
 
-  it('renders the disabled Generate Quote button with its Sprint 8 hint', async () => {
+  it('opens the quote workspace once the seven-field selection is complete', async () => {
     selectFullConfiguration();
+    const user = userEvent.setup();
+    renderWithQuery(<ConfigurationSummary />);
+
+    const quote = await screen.findByRole('button', { name: 'Generate Quote' });
+    expect(quote).toBeEnabled();
+    await user.click(quote);
+
+    expect(useQuoteUiStore.getState().open).toBe(true);
+    expect(useQuoteUiStore.getState().quoteId).toBeNull();
+  });
+
+  it('keeps Generate Quote disabled with its requirement hint while the selection is incomplete', async () => {
     renderWithQuery(<ConfigurationSummary />);
 
     const quote = await screen.findByRole('button', { name: 'Generate Quote' });
     expect(quote).toBeDisabled();
     const hintId = quote.getAttribute('aria-describedby');
     expect(hintId).toBeTruthy();
-    expect(document.getElementById(hintId as string)).toHaveTextContent('Available in Sprint 8');
+    expect(document.getElementById(hintId as string)).toHaveTextContent(
+      'Complete the vehicle, colour, wheel and tyre selection to generate a quote.',
+    );
+  });
+
+  it('opens the quote history from the secondary action', async () => {
+    const user = userEvent.setup();
+    renderWithQuery(<ConfigurationSummary />);
+
+    await user.click(await screen.findByRole('button', { name: 'View quote history' }));
+    expect(useQuoteUiStore.getState().historyOpen).toBe(true);
   });
 
   it('prints the handout through the browser print pipeline', async () => {
