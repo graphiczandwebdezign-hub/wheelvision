@@ -1,7 +1,25 @@
-export abstract class BaseRepository<T, TCreate, TUpdate> {
-  protected constructor(protected readonly prisma: T) {}
+import type { PrismaClient } from '@prisma/client';
 
-  protected async withTransaction<R>(operation: () => Promise<R>): Promise<R> {
-    return operation();
+/**
+ * The PrismaClient surface available inside an interactive transaction —
+ * identical to the client except connection/transaction management, which
+ * the transaction runner owns.
+ */
+export type RepositoryTransaction = Omit<
+  PrismaClient,
+  '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'
+>;
+
+export abstract class BaseRepository {
+  protected constructor(protected readonly prisma: PrismaClient) {}
+
+  /**
+   * Run a set of operations inside a single database transaction. All
+   * queries issued through the provided client commit or roll back together.
+   */
+  protected async withTransaction<R>(
+    operation: (tx: RepositoryTransaction) => Promise<R>,
+  ): Promise<R> {
+    return this.prisma.$transaction((tx: RepositoryTransaction) => operation(tx));
   }
 }

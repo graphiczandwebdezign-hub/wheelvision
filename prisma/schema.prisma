@@ -34,6 +34,14 @@ model Tenant {
   quotes              Quote[]
   assets              Asset[]
   auditLogs           AuditLog[]
+  quoteSequence       Int                 @default(0)
+  priceLists          PriceList[]
+  wheelPrices         WheelPrice[]
+  tyrePrices          TyrePrice[]
+  labourPrices        LabourPrice[]
+  priceRules          PriceRule[]
+  discountRules       DiscountRule[]
+  quoteSnapshots      QuoteSnapshot[]
 
   @@index([slug])
 }
@@ -109,7 +117,7 @@ model VehicleManufacturer {
   tenant Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   models VehicleModel[]
 
-  @@index([tenantId, name])
+  @@unique([tenantId, name])
 }
 
 model VehicleModel {
@@ -128,6 +136,7 @@ model VehicleModel {
 
   @@index([tenantId, name])
   @@index([vehicleManufacturerId])
+  @@unique([tenantId, vehicleManufacturerId, name])
 }
 
 model VehicleVariant {
@@ -135,7 +144,9 @@ model VehicleVariant {
   tenantId        String    @db.Uuid
   vehicleModelId  String    @db.Uuid
   name            String
+  year            Int?
   wheelDiameterMm Int
+  renderMetadata  Json?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
   deletedAt       DateTime?
@@ -147,6 +158,7 @@ model VehicleVariant {
 
   @@index([tenantId, name])
   @@index([vehicleModelId])
+  @@unique([tenantId, vehicleModelId, name])
 }
 
 model VehicleColour {
@@ -163,6 +175,7 @@ model VehicleColour {
 
   @@index([tenantId, name])
   @@index([vehicleVariantId])
+  @@unique([tenantId, vehicleVariantId, name])
 }
 
 model WheelBrand {
@@ -176,7 +189,7 @@ model WheelBrand {
   tenant Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   models WheelModel[]
 
-  @@index([tenantId, name])
+  @@unique([tenantId, name])
 }
 
 model WheelModel {
@@ -184,6 +197,7 @@ model WheelModel {
   tenantId     String    @db.Uuid
   wheelBrandId String    @db.Uuid
   name         String
+  metadata     Json?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
   deletedAt    DateTime?
@@ -191,10 +205,12 @@ model WheelModel {
   tenant         Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   brand          WheelBrand           @relation(fields: [wheelBrandId], references: [id], onDelete: Cascade)
   finishes       WheelFinish[]
+  sizes          WheelSize[]
   configurations SavedConfiguration[]
 
   @@index([tenantId, name])
   @@index([wheelBrandId])
+  @@unique([tenantId, wheelBrandId, name])
 }
 
 model WheelFinish {
@@ -211,19 +227,28 @@ model WheelFinish {
 
   @@index([tenantId, name])
   @@index([wheelModelId])
+  @@unique([tenantId, wheelModelId, name])
 }
 
 model WheelSize {
-  id        String    @id @default(uuid()) @db.Uuid
-  tenantId  String    @db.Uuid
-  size      String
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  deletedAt DateTime?
+  id             String    @id @default(uuid()) @db.Uuid
+  tenantId       String    @db.Uuid
+  wheelModelId   String    @db.Uuid
+  size           String
+  diameterInches Int?
+  widthInches    Float?
+  boltPattern    String?
+  offsetMm       Int?
+  centreBoreMm   Float?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  deletedAt      DateTime?
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  model  WheelModel @relation(fields: [wheelModelId], references: [id], onDelete: Cascade)
 
-  @@index([tenantId, size])
+  @@unique([tenantId, size])
+  @@index([wheelModelId])
 }
 
 model TyreBrand {
@@ -237,7 +262,7 @@ model TyreBrand {
   tenant Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   models TyreModel[]
 
-  @@index([tenantId, name])
+  @@unique([tenantId, name])
 }
 
 model TyreModel {
@@ -245,6 +270,7 @@ model TyreModel {
   tenantId    String    @db.Uuid
   tyreBrandId String    @db.Uuid
   name        String
+  metadata    Json?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   deletedAt   DateTime?
@@ -256,13 +282,20 @@ model TyreModel {
 
   @@index([tenantId, name])
   @@index([tyreBrandId])
+  @@unique([tenantId, tyreBrandId, name])
 }
 
 model TyreProfile {
-  id          String    @id @default(uuid()) @db.Uuid
-  tenantId    String    @db.Uuid
-  tyreModelId String    @db.Uuid
-  profile     String
+  id                String    @id @default(uuid()) @db.Uuid
+  tenantId          String    @db.Uuid
+  tyreModelId       String    @db.Uuid
+  profile           String
+  widthMm           Int?
+  aspectRatio       Int?
+  rimDiameterInches Int?
+  construction      String?
+  loadIndex         Int?
+  speedRating       String?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   deletedAt   DateTime?
@@ -272,6 +305,7 @@ model TyreProfile {
 
   @@index([tenantId, profile])
   @@index([tyreModelId])
+  @@unique([tenantId, tyreModelId, profile])
 }
 
 model SavedConfiguration {
@@ -293,7 +327,7 @@ model SavedConfiguration {
   tyreModel      TyreModel      @relation(fields: [tyreModelId], references: [id], onDelete: Cascade)
   quotes         Quote[]
 
-  @@index([tenantId, name])
+  @@unique([tenantId, name])
   @@index([vehicleVariantId])
   @@index([vehicleModelId])
   @@index([wheelModelId])
@@ -315,6 +349,7 @@ model Customer {
 
   @@index([tenantId, name])
   @@index([email])
+  @@unique([tenantId, email])
 }
 
 model Quote {
@@ -328,11 +363,24 @@ model Quote {
   updatedAt            DateTime  @updatedAt
   deletedAt            DateTime?
 
+  quoteNumber   String?
+  consultantName String?
+  currency      String   @default("ZAR")
+  subtotalCents Int?
+  discountCents Int?
+  vatBasisPoints Int?
+  vatCents      Int?
+  validUntil    DateTime?
+  archivedAt    DateTime?
+
   tenant             Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   customer           Customer           @relation(fields: [customerId], references: [id], onDelete: Cascade)
   savedConfiguration SavedConfiguration @relation(fields: [savedConfigurationId], references: [id], onDelete: Cascade)
   assets             Asset[]
+  lines              QuoteLine[]
+  snapshot           QuoteSnapshot?
 
+  @@unique([tenantId, quoteNumber])
   @@index([tenantId, status])
   @@index([customerId])
   @@index([savedConfigurationId])
@@ -372,4 +420,154 @@ model AuditLog {
 
   @@index([tenantId, entityType])
   @@index([entityId])
+}
+
+
+// ---------------------------------------------------------------------------
+// Sprint 8 — Quote domain (additive; see migration 20260731150000_quote_domain)
+// ---------------------------------------------------------------------------
+
+model PriceList {
+  id        String    @id @default(uuid()) @db.Uuid
+  tenantId  String    @db.Uuid
+  name      String
+  kind      String    @default("RETAIL")
+  currency  String    @default("ZAR")
+  isDefault Boolean   @default(false)
+  active    Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  wheelPrices  WheelPrice[]
+  tyrePrices   TyrePrice[]
+  labourPrices LabourPrice[]
+  priceRules   PriceRule[]
+
+  @@unique([tenantId, name])
+}
+
+model PriceRule {
+  id                 String    @id @default(uuid()) @db.Uuid
+  tenantId           String    @db.Uuid
+  priceListId        String    @db.Uuid
+  category           String
+  adjustmentType     String
+  percentBasisPoints Int?
+  amountCents        Int?
+  brand              String?
+  priority           Int       @default(0)
+  active             Boolean   @default(true)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  deletedAt          DateTime?
+
+  tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  priceList PriceList @relation(fields: [priceListId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, priceListId, active])
+}
+
+model WheelPrice {
+  id           String    @id @default(uuid()) @db.Uuid
+  tenantId     String    @db.Uuid
+  priceListId  String    @db.Uuid
+  wheelModelId String    @db.Uuid
+  wheelSizeId  String?
+  amountCents  Int
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime?
+
+  tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  priceList PriceList @relation(fields: [priceListId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, priceListId, wheelModelId])
+}
+
+model TyrePrice {
+  id            String    @id @default(uuid()) @db.Uuid
+  tenantId      String    @db.Uuid
+  priceListId   String    @db.Uuid
+  tyreModelId   String    @db.Uuid
+  tyreProfileId String?
+  amountCents   Int
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  deletedAt     DateTime?
+
+  tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  priceList PriceList @relation(fields: [priceListId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, priceListId, tyreModelId])
+}
+
+model LabourPrice {
+  id          String    @id @default(uuid()) @db.Uuid
+  tenantId    String    @db.Uuid
+  priceListId String    @db.Uuid
+  serviceType String
+  unit        String
+  amountCents Int
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  priceList PriceList @relation(fields: [priceListId], references: [id], onDelete: Cascade)
+
+  @@unique([priceListId, serviceType, unit])
+}
+
+model DiscountRule {
+  id                 String    @id @default(uuid()) @db.Uuid
+  tenantId           String    @db.Uuid
+  name               String
+  kind               String
+  percentBasisPoints Int?
+  amountCents        Int?
+  category           String?
+  priority           Int       @default(0)
+  active             Boolean   @default(true)
+  validFrom          DateTime?
+  validTo            DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  deletedAt          DateTime?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, active])
+}
+
+model QuoteLine {
+  id              String   @id @default(uuid()) @db.Uuid
+  quoteId         String   @db.Uuid
+  category        String
+  description     String
+  quantity        Int
+  unitAmountCents Int
+  totalCents      Int
+  sortOrder       Int      @default(0)
+  metadata        Json?
+  createdAt       DateTime @default(now())
+
+  quote Quote @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+
+  @@index([quoteId])
+}
+
+model QuoteSnapshot {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @db.Uuid
+  quoteId   String   @unique @db.Uuid
+  version   Int      @default(1)
+  payload   Json
+  createdAt DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  quote  Quote  @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
 }
