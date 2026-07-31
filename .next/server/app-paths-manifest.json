@@ -1,9 +1,0 @@
-{
-  "/api/health/route": "app/api/health/route.js",
-  "/api/vehicles/route": "app/api/vehicles/route.js",
-  "/api/wheels/route": "app/api/wheels/route.js",
-  "/_not-found/page": "app/_not-found/page.js",
-  "/admin/page": "app/admin/page.js",
-  "/page": "app/page.js",
-  "/preview/page": "app/preview/page.js"
-}

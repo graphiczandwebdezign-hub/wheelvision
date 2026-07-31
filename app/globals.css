@@ -14,3 +14,19 @@ body {
 * {
   box-sizing: border-box;
 }
+
+/*
+ * Print: the customer handout (print-only section) takes over the page.
+ * The app chrome hides itself with `print:hidden`; the sheet keeps paper
+ * defaults — white background, dark text, system fonts.
+ */
+@media print {
+  :root {
+    color-scheme: light;
+  }
+
+  body {
+    background: #ffffff;
+    color: #0f172a;
+  }
+}
