@@ -187,6 +187,7 @@ export function createQuoteRecord(overrides: Partial<QuoteRecord> = {}): QuoteRe
     customer: { name: 'Mrs Nkosi', email: 'nkosi@example.co.za', phone: '+27 82 555 0100' },
     lines,
     snapshot: { payload: snapshot },
+    statusHistories: [],
     ...overrides,
   };
 }

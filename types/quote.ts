@@ -12,7 +12,15 @@ import type { VehicleRenderMetadata } from '@/types/render-metadata';
 // Enums (string unions; persisted as text, validated by zod at the boundary)
 // ---------------------------------------------------------------------------
 
-export type QuoteStatus = 'ISSUED' | 'ARCHIVED';
+export type QuoteStatus =
+  | 'DRAFT'
+  | 'ISSUED'
+  | 'VIEWED'
+  | 'ACCEPTED'
+  | 'REJECTED'
+  | 'EXPIRED'
+  | 'CANCELLED'
+  | 'ARCHIVED';
 
 export type QuoteLineCategory = 'WHEEL' | 'TYRE' | 'ACCESSORY' | 'PACKAGE' | 'LABOUR';
 
@@ -180,6 +188,23 @@ export interface QuoteDetail extends QuoteSummary {
 // Requests
 // ---------------------------------------------------------------------------
 
+export interface QuoteStatusHistoryDto {
+  readonly id: string;
+  readonly fromStatus: QuoteStatus | null;
+  readonly toStatus: QuoteStatus;
+  readonly actorName: string | null;
+  readonly createdAt: string;
+}
+
+export interface QuoteStatusDetail {
+  readonly quoteNumber: string;
+  readonly status: QuoteStatus;
+  readonly validUntil: string;
+  readonly isExpired: boolean;
+  readonly canBeAccepted: boolean;
+  readonly history: readonly QuoteStatusHistoryDto[];
+}
+
 export interface CreateQuoteRequest {
   readonly configuration: PreviewSelection;
   readonly customer: {
@@ -188,4 +213,9 @@ export interface CreateQuoteRequest {
     readonly phone?: string | null;
   };
   readonly consultantName?: string | null;
+}
+
+export interface UpdateQuoteStatusRequest {
+  readonly status: QuoteStatus;
+  readonly actorName?: string | null;
 }

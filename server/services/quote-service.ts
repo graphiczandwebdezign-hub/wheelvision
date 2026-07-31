@@ -4,28 +4,14 @@ import type { PricingService } from '@/server/services/pricing-service';
 import type { TyreService } from '@/server/services/tyre-service';
 import type { VehicleService } from '@/server/services/vehicle-service';
 import type { WheelService } from '@/server/services/wheel-service';
-import type { QuoteRepositoryPort } from '@/server/repositories/quote-repository';
+import type { QuoteRepositoryPort, QuoteRecord } from '@/server/repositories/quote-repository';
 import { buildQuoteDetail, buildSnapshotPayload } from '@/server/quote/quote-builder';
 import { QUOTE_VALIDITY_DAYS } from '@/server/quote/quote-terms';
 import type { CreateQuoteInput, ListQuotesQuery } from '@/server/validators/quote-schemas';
 import { AppError } from '@/server/utils/errors';
 import type { PaginatedResult } from '@/server/utils/pagination';
 import type { VehicleDetail, WheelDetail, TyreDetail } from '@/types/catalog';
-import type { QuoteDetail, QuoteSnapshotPayload, QuoteSummary } from '@/types/quote';
-
-/**
- * QuoteService — the only place quote business decisions live. Controllers
- * parse and respond; repositories persist; this service owns completeness
- * validation, catalog-membership revalidation, pricing orchestration,
- * immutable snapshot assembly and the quote lifecycle (issue / duplicate /
- * archive).
- *
- * Immutability contract: a quote's content is assembled once from the
- * *priced* configuration and persisted with its snapshot; nothing in the
- * read path recomputes money, so catalog/price changes afterwards can never
- * retroactively alter an issued quote. Duplication is the only "reuse" —
- * it deliberately re-prices at current catalogue state under a fresh number.
- */
+import type { QuoteDetail, QuoteSnapshotPayload, QuoteStatus, QuoteStatusDetail, QuoteSummary } from '@/types/quote';
 
 export interface QuoteCatalogServices {
   readonly vehicles: VehicleService;
@@ -41,7 +27,6 @@ export interface QuoteServiceDeps {
   readonly catalog: QuoteCatalogServices;
   readonly pricing: PricingService;
   readonly dealers: DealerLookup;
-  /** Clock seam for deterministic tests (defaults to system time). */
   readonly now?: () => Date;
 }
 
@@ -106,8 +91,6 @@ export class QuoteService extends BaseService<QuoteRepositoryPort> {
       at: now,
     });
 
-    // Line ids are pre-generated so the snapshot payload and the persisted
-    // rows carry identical identities.
     const lines = pricing.lines.map((line) => ({
       id: createStorageId('qline'),
       category: line.category,
@@ -119,9 +102,6 @@ export class QuoteService extends BaseService<QuoteRepositoryPort> {
       metadata: line.metadata && typeof line.metadata === 'object' ? line.metadata : null,
     }));
 
-    // The number is allocated atomically inside the repository's creation
-    // transaction (tenant counter bump); it replaces this placeholder before
-    // the snapshot row is written, so the persisted snapshot carries it.
     const snapshotPayload = buildSnapshotPayload({
       quoteNumber: 'WV-PENDING',
       issuedAt: now,
@@ -178,22 +158,117 @@ export class QuoteService extends BaseService<QuoteRepositoryPort> {
     query: ListQuotesQuery,
   ): Promise<PaginatedResult<QuoteSummary>> {
     const { data, total } = await this.repository.listByTenant(tenantId, query, query.status);
-    return { total, data: data.map((record) => buildQuoteDetail(record)) };
+    const processed = await Promise.all(data.map((record) => this.ensureFreshExpiryRecord(record)));
+    return { total, data: processed.map((record) => buildQuoteDetail(record)) };
   }
 
-  async getQuote(tenantId: string, id: string): Promise<QuoteDetail> {
-    const record = await this.repository.findById(tenantId, id);
+  async getQuote(tenantId: string | null, id: string): Promise<QuoteDetail> {
+    const isUuid = id.includes('-');
+    const isQuoteNumber = id.startsWith('WV-');
+    let record: QuoteRecord | null = null;
+    if (isUuid) {
+      record = await this.repository.findById(tenantId, id);
+      if (record === null && !tenantId) {
+        record = await this.repository.findById(null, id);
+      }
+    } else if (isQuoteNumber) {
+      record = await this.repository.findByNumber(id);
+    }
     if (record === null) {
       throw AppError.notFound('Quote not found', { quoteId: id });
     }
-    return buildQuoteDetail(record);
+    return this.ensureFreshExpiry(record);
   }
 
-  /**
-   * Duplicates from the immutable snapshot: same configuration, customer and
-   * consultant, but re-priced at current catalogue state and issued under a
-   * fresh sequential number — the duplicate never touches the source quote.
-   */
+  async getQuoteByNumber(quoteNumber: string): Promise<QuoteDetail> {
+    const record = await this.repository.findByNumber(quoteNumber);
+    if (record === null) {
+      throw AppError.notFound('Quote not found', { quoteNumber });
+    }
+    return this.ensureFreshExpiry(record);
+  }
+
+  async getQuoteStatus(idOrQuoteNumber: string, tenantId: string | null = null): Promise<QuoteStatusDetail> {
+    let record = idOrQuoteNumber.includes('-')
+      ? await this.repository.findById(tenantId, idOrQuoteNumber)
+      : await this.repository.findByNumber(idOrQuoteNumber);
+
+    if (record === null) {
+      throw AppError.notFound('Quote not found', { quoteId: idOrQuoteNumber });
+    }
+
+    record = await this.ensureFreshExpiryRecord(record);
+
+    const now = this.deps.now?.() ?? new Date();
+    const validUntilDate = record.validUntil ? new Date(record.validUntil) : now;
+    const isExpired = validUntilDate.getTime() < now.getTime() || record.status === 'EXPIRED';
+    const canBeAccepted = !isExpired && ['ISSUED', 'VIEWED'].includes(record.status);
+
+    return {
+      quoteNumber: record.quoteNumber ?? '',
+      status: record.status as QuoteStatus,
+      validUntil: validUntilDate.toISOString(),
+      isExpired,
+      canBeAccepted,
+      history: (record.statusHistories ?? []).map((h) => ({
+        id: h.id,
+        fromStatus: (h.fromStatus as QuoteStatus) ?? null,
+        toStatus: h.toStatus as QuoteStatus,
+        actorName: h.actorName,
+        createdAt: h.createdAt.toISOString(),
+      })),
+    };
+  }
+
+  async updateQuoteStatus(
+    idOrQuoteNumber: string,
+    newStatus: string,
+    actorName?: string | null,
+    tenantId: string | null = null,
+  ): Promise<QuoteDetail> {
+    let record = idOrQuoteNumber.includes('-')
+      ? await this.repository.findById(tenantId, idOrQuoteNumber)
+      : await this.repository.findByNumber(idOrQuoteNumber);
+
+    if (record === null) {
+      throw AppError.notFound('Quote not found', { quoteId: idOrQuoteNumber });
+    }
+
+    const now = this.deps.now?.() ?? new Date();
+    const validUntilDate = record.validUntil ? new Date(record.validUntil) : now;
+    if (validUntilDate.getTime() < now.getTime() && ['ISSUED', 'VIEWED'].includes(record.status)) {
+      record = (await this.repository.updateStatus(tenantId, record.quoteNumber ?? record.id, 'EXPIRED', 'System')) ?? record;
+    }
+
+    if (newStatus === 'ACCEPTED') {
+      if (record.status === 'EXPIRED' || validUntilDate.getTime() < now.getTime()) {
+        throw new AppError('Expired quotations cannot be accepted', {
+          code: 'VALIDATION_ERROR',
+          statusCode: 400,
+        });
+      }
+      if (!['ISSUED', 'VIEWED'].includes(record.status)) {
+        throw new AppError(`Cannot accept a quote with status ${record.status}`, {
+          code: 'VALIDATION_ERROR',
+          statusCode: 400,
+        });
+      }
+    }
+
+    const updated = await this.repository.updateStatus(
+      tenantId,
+      record.quoteNumber ?? record.id,
+      newStatus,
+      actorName ?? undefined,
+    );
+
+    if (updated === null) {
+      throw AppError.notFound('Quote not found', { quoteId: idOrQuoteNumber });
+    }
+
+    return buildQuoteDetail(updated);
+  }
+
   async duplicateQuote(tenantId: string, id: string): Promise<QuoteDetail> {
     const source = await this.repository.findById(tenantId, id);
     if (source === null) {
@@ -222,13 +297,6 @@ export class QuoteService extends BaseService<QuoteRepositoryPort> {
     return buildQuoteDetail(record);
   }
 
-  // -------------------------------------------------------------------------
-
-  /**
-   * A quotation can only be issued from a fully specified configuration —
-   * every dimension of the priced package must be present. Missing
-   * dimensions are a business error (400), distinct from a schema error.
-   */
   private requireCompleteConfiguration(
     configuration: CreateQuoteInput['configuration'],
   ): CompleteConfiguration {
@@ -248,11 +316,6 @@ export class QuoteService extends BaseService<QuoteRepositoryPort> {
     return configuration as CompleteConfiguration;
   }
 
-  /**
-   * Revalidates the selection against the live catalog so a quote can never
-   * reference a delisted colour/finish/size/profile — the commercial
-   * equivalent of the preview's reconciliation pass.
-   */
   private assertCatalogMembership(
     configuration: CompleteConfiguration,
     vehicle: VehicleDetail,
@@ -293,7 +356,6 @@ export class QuoteService extends BaseService<QuoteRepositoryPort> {
     return dealer;
   }
 
-  /** Snapshot payloads are JSON; the shape is trusted but validated minimally. */
   private readSnapshot(payload: unknown): QuoteSnapshotPayload | null {
     if (typeof payload !== 'object' || payload === null) {
       return null;
@@ -303,5 +365,25 @@ export class QuoteService extends BaseService<QuoteRepositoryPort> {
       return null;
     }
     return record as QuoteSnapshotPayload;
+  }
+
+  private async ensureFreshExpiry(record: QuoteRecord): Promise<QuoteDetail> {
+    const fresh = await this.ensureFreshExpiryRecord(record);
+    return buildQuoteDetail(fresh);
+  }
+
+  private async ensureFreshExpiryRecord(record: QuoteRecord): Promise<QuoteRecord> {
+    const now = this.deps.now?.() ?? new Date();
+    const validUntilDate = record.validUntil ? new Date(record.validUntil) : now;
+    if (validUntilDate.getTime() < now.getTime() && ['ISSUED', 'VIEWED'].includes(record.status)) {
+      const updated = await this.repository.updateStatus(
+        record.tenantId,
+        record.quoteNumber ?? record.id,
+        'EXPIRED',
+        'System',
+      );
+      return updated ?? record;
+    }
+    return record;
   }
 }

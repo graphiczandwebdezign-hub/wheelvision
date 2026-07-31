@@ -106,6 +106,31 @@ function createQuoteRepositoryFake() {
       }
       return { ...source, status: 'ARCHIVED', archivedAt: ISSUED };
     },
+    findByNumber: async (quoteNumber) => {
+      if (!source || source.quoteNumber !== quoteNumber) {
+        return null;
+      }
+      return source;
+    },
+    updateStatus: async (_tenantId, _idOrQuoteNumber, newStatus, actorName) => {
+      if (!source) return null;
+      const updated = {
+        ...source,
+        status: newStatus,
+        statusHistories: [
+          ...source.statusHistories,
+          {
+            id: 'hist-1',
+            fromStatus: source.status,
+            toStatus: newStatus,
+            actorName: actorName ?? null,
+            createdAt: ISSUED,
+          },
+        ],
+      };
+      source = updated;
+      return updated;
+    },
   };
   return {
     repository,

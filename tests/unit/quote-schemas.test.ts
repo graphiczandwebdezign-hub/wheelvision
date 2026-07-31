@@ -74,8 +74,8 @@ describe('listQuotesQuerySchema', () => {
 
   it('accepts only known statuses', () => {
     expect(listQuotesQuerySchema.parse({ status: 'ISSUED' }).status).toBe('ISSUED');
-    expect(listQuotesQuerySchema.parse({ status: 'ARCHIVED' }).status).toBe('ARCHIVED');
-    expect(() => listQuotesQuerySchema.parse({ status: 'DRAFT' })).toThrow();
+    expect(listQuotesQuerySchema.parse({ status: 'DRAFT' }).status).toBe('DRAFT');
+    expect(() => listQuotesQuerySchema.parse({ status: 'INVALID_STATUS' })).toThrow();
   });
 
   it('rejects out-of-range pagination', () => {

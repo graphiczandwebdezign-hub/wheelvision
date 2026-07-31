@@ -1,22 +1,21 @@
-# Chapter 17 — Admin Portal
+# Chapter 17 — Dealer Administration Platform (Sprint 10)
 
-## Admin capabilities
+## Overview
 
-- Upload vehicles and wheel assets.
-- Review metadata and preview render output.
-- Publish catalog entries.
-- Manage tenant-specific content.
+The Dealer Administration Platform provides tenant-isolated operational control over every WheelVision instance. Dealers can manage their catalog, pricing, promotions, consultants, and tenant settings without developer intervention.
 
-## UX requirements
+## Modules Implemented
 
-- Drag-and-drop asset upload.
-- Preview renderer before publishing.
-- A/B review of metadata changes.
-- Audit log for publishing actions.
+- `/admin/dashboard`: Real-time quotation metrics, conversion rate, estimated revenue, top-selling wheel/tyre brands, recent activity, and system health.
+- `/admin/catalog`: Vehicle, wheel, and tyre inventory management with status toggles, filtering, pagination, and soft deletion.
+- `/admin/pricing`: Price lists, wheel/tyre model unit pricing, and labour service fees (balancing, alignment, fitment).
+- `/admin/promotions`: Discount campaigns (percentage and fixed amounts), priorities, stacking rules, and validity windows.
+- `/admin/consultants`: Dealer consultant team profiles, contact info, active status, and default assignment.
+- `/admin/settings`: Dealership profile, VAT registration, company registration, regional settings, quote validity period, and logo upload storage abstraction.
 
-## Workflows
+## Architecture & Reusable Primitives
 
-1. Upload asset package.
-2. Validate metadata.
-3. Preview render.
-4. Approve and publish.
+- `features/admin/`: Admin types, API hooks, and layout shells.
+- `AdminTable`: Reusable data table supporting search, sorting, pagination, and CSV export.
+- `AdminLayoutShell`: Consistent sidebar navigation and tenant status header.
+- Permissions: Extension interfaces designed for Sprint 12 RBAC integration.

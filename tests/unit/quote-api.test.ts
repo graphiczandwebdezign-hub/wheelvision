@@ -168,6 +168,9 @@ vi.mock('@/server/utils/prisma', async () => {
     savedConfiguration: {
       create: vi.fn(async () => ({ id: QUOTE_FIXTURE_IDS.savedConfigurationId })),
     },
+    quoteStatusHistory: {
+      create: vi.fn(async () => ({ id: 'hist-1' })),
+    },
     quote: {
       create: vi.fn(async (args: { data: Record<string, unknown> }) => {
         const row = quoteRow(args.data);
