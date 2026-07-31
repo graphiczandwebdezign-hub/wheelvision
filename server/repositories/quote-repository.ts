@@ -1,4 +1,4 @@
-import type { PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@prisma/client';
 import { BaseRepository, type RepositoryTransaction } from '@/server/repositories/base-repository';
 import { formatQuoteNumber } from '@/server/quote/quote-number';
 import { PRISMA_UNIQUE_VIOLATION, QUOTE_NUMBER_MAX_RETRIES } from '@/server/quote/quote-terms';
@@ -120,12 +120,17 @@ export interface QuoteRepositoryPort {
   archive(tenantId: string, id: string, archivedAt: Date): Promise<QuoteRecord | null>;
 }
 
+/**
+ * The graph every quote read returns. `satisfies` (not `as const`) keeps the
+ * mutable array Prisma's include args require, while contextual typing still
+ * pins each literal (true/'asc') against `Prisma.QuoteInclude`.
+ */
 const quoteInclude = {
   tenant: { select: { id: true, name: true, slug: true } },
   customer: { select: { name: true, email: true, phone: true } },
-  lines: { orderBy: [{ sortOrder: 'asc' as const }, { createdAt: 'asc' as const }] },
+  lines: { orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }] },
   snapshot: { select: { payload: true } },
-} as const;
+} satisfies Prisma.QuoteInclude;
 
 export class QuoteRepository extends BaseRepository implements QuoteRepositoryPort {
   constructor(prisma: PrismaClient) {
@@ -214,7 +219,18 @@ export class QuoteRepository extends BaseRepository implements QuoteRepositoryPo
         vatBasisPoints: input.vatBasisPoints,
         vatCents: input.vatCents,
         validUntil: input.validUntil,
-        lines: { create: [...input.lines] },
+        // Json column: map the domain's plain null to Prisma's SQL-NULL
+        // sentinel; populated metadata is JSON-safe by construction (the
+        // builder emits scalar finish/size/profile ids only).
+        lines: {
+          create: input.lines.map((line) => ({
+            ...line,
+            metadata:
+              line.metadata === null
+                ? Prisma.DbNull
+                : (line.metadata as Prisma.InputJsonValue),
+          })),
+        },
         snapshot: {
           create: {
             tenantId: input.tenantId,
