@@ -6,27 +6,7 @@ import { AppError, isPrismaErrorCode } from '@/server/utils/errors';
 import { toSkipTake, type PaginatedResult, type PaginationParams } from '@/server/utils/pagination';
 import type { QuoteStatus } from '@/types/quote';
 
-/**
- * Quote persistence. Writes only — all business decisions live in
- * QuoteService. Two invariants are enforced close to the metal:
- *
- * - Quote numbers come from the tenant's monotonically increasing counter,
- *   incremented atomically inside the quote-creation transaction
- *   (`UPDATE Tenant ... quoteSequence = quoteSequence + 1`), and additionally
- *   protected by the `(tenantId, quoteNumber)` unique index.
- * - Quote content is immutable after creation; the only lifecycle write is
- *   `status` (ISSUED → ARCHIVED).
- *
- * Because the counter increment and the insert share one transaction, a
- * unique-violation (P2002 — e.g. legacy rows colliding) rolls the counter
- * back too; creation retries with a fresh sequence up to
- * QUOTE_NUMBER_MAX_RETRIES before surfacing an error. Concurrent creations
- * are serialised by PostgreSQL's row lock on the tenant counter, so numbers
- * are sequential, gap-light and collision-safe by construction.
- */
-
 export interface QuoteLineInsert {
-  /** Service pre-generates ids so the snapshot and the rows stay identical. */
   readonly id: string;
   readonly category: string;
   readonly description: string;
@@ -39,19 +19,12 @@ export interface QuoteLineInsert {
 
 export interface CreateQuoteRecordInput {
   readonly tenantId: string;
-  /** Issue timestamp — the quote number derives from it (and the counter). */
   readonly issuedAt: Date;
   readonly customer: {
     readonly name: string;
     readonly email: string | null;
     readonly phone: string | null;
   };
-  /**
-   * FK anchors for the legacy required relations. The SavedConfiguration is
-   * system-managed: it is named `Quote {quoteNumber}` inside the creation
-   * transaction so the (tenantId, name) unique constraint is satisfied by
-   * construction.
-   */
   readonly configuration: {
     readonly vehicleVariantId: string;
     readonly vehicleModelId: string;
@@ -67,11 +40,6 @@ export interface CreateQuoteRecordInput {
   readonly totalCents: number;
   readonly validUntil: Date;
   readonly lines: readonly QuoteLineInsert[];
-  /**
-   * Serialised QuoteSnapshotPayload with a placeholder `quoteNumber` — the
-   * repository replaces that field with the number allocated inside the
-   * creation transaction so the snapshot always carries the truth.
-   */
   readonly snapshotPayload: unknown;
 }
 
@@ -84,6 +52,14 @@ export interface QuoteLineRecord {
   readonly totalCents: number;
   readonly sortOrder: number;
   readonly metadata: unknown;
+}
+
+export interface QuoteStatusHistoryRecord {
+  readonly id: string;
+  readonly fromStatus: string | null;
+  readonly toStatus: string;
+  readonly actorName: string | null;
+  readonly createdAt: Date;
 }
 
 export interface QuoteRecord {
@@ -106,30 +82,33 @@ export interface QuoteRecord {
   readonly customer: { name: string; email: string | null; phone: string | null };
   readonly lines: QuoteLineRecord[];
   readonly snapshot: { readonly payload: unknown } | null;
+  readonly statusHistories: QuoteStatusHistoryRecord[];
 }
 
 export interface QuoteRepositoryPort {
-  /** Atomically increments the tenant counter inside a creation transaction. */
   createQuote(input: CreateQuoteRecordInput): Promise<QuoteRecord>;
   listByTenant(
     tenantId: string,
     pagination: PaginationParams,
     status: QuoteStatus | undefined,
   ): Promise<PaginatedResult<QuoteRecord>>;
-  findById(tenantId: string, id: string): Promise<QuoteRecord | null>;
+  findById(tenantId: string | null, id: string): Promise<QuoteRecord | null>;
+  findByNumber(quoteNumber: string): Promise<QuoteRecord | null>;
   archive(tenantId: string, id: string, archivedAt: Date): Promise<QuoteRecord | null>;
+  updateStatus(
+    tenantId: string | null,
+    idOrQuoteNumber: string,
+    newStatus: string,
+    actorName?: string,
+  ): Promise<QuoteRecord | null>;
 }
 
-/**
- * The graph every quote read returns. `satisfies` (not `as const`) keeps the
- * mutable array Prisma's include args require, while contextual typing still
- * pins each literal (true/'asc') against `Prisma.QuoteInclude`.
- */
 const quoteInclude = {
   tenant: { select: { id: true, name: true, slug: true } },
   customer: { select: { name: true, email: true, phone: true } },
   lines: { orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }] },
   snapshot: { select: { payload: true } },
+  statusHistories: { orderBy: [{ createdAt: 'asc' }] },
 } satisfies Prisma.QuoteInclude;
 
 export class QuoteRepository extends BaseRepository implements QuoteRepositoryPort {
@@ -146,7 +125,7 @@ export class QuoteRepository extends BaseRepository implements QuoteRepositoryPo
           isPrismaErrorCode(error, PRISMA_UNIQUE_VIOLATION) &&
           attempt < QUOTE_NUMBER_MAX_RETRIES
         ) {
-          continue; // counter rolled back with the transaction — retry with a fresh one
+          continue;
         }
         if (isPrismaErrorCode(error, PRISMA_UNIQUE_VIOLATION)) {
           throw new AppError('Could not allocate a unique quote number', {
@@ -158,23 +137,16 @@ export class QuoteRepository extends BaseRepository implements QuoteRepositoryPo
         throw error;
       }
     }
-    // Unreachable: the loop either returns or throws. Kept for the checker.
     throw new AppError('Could not allocate a unique quote number', {
       code: 'INTERNAL_ERROR',
       statusCode: 500,
     });
   }
 
-  /**
-   * Split out so the service can drive collision retries against the same
-   * transaction body with a fresh number each attempt.
-   */
   async createQuoteInTransaction(
     tx: RepositoryTransaction,
     input: CreateQuoteRecordInput,
   ): Promise<QuoteRecord> {
-    // Atomic sequence allocation — PostgreSQL serialises this UPDATE; the
-    // bumped value is the quote's sequence inside the same transaction.
     const tenantCounter = await tx.tenant.update({
       where: { id: input.tenantId },
       data: { quoteSequence: { increment: 1 } },
@@ -212,16 +184,12 @@ export class QuoteRepository extends BaseRepository implements QuoteRepositoryPo
         quoteNumber,
         consultantName: input.consultantName,
         currency: input.currency,
-        // Legacy decimal column (required) stays populated in lockstep.
         totalAmount: (input.totalCents / 100).toFixed(2) as unknown as number,
         subtotalCents: input.subtotalCents,
         discountCents: input.discountCents,
         vatBasisPoints: input.vatBasisPoints,
         vatCents: input.vatCents,
         validUntil: input.validUntil,
-        // Json column: map the domain's plain null to Prisma's SQL-NULL
-        // sentinel; populated metadata is JSON-safe by construction (the
-        // builder emits scalar finish/size/profile ids only).
         lines: {
           create: input.lines.map((line) => ({
             ...line,
@@ -240,6 +208,14 @@ export class QuoteRepository extends BaseRepository implements QuoteRepositoryPo
                 : {}),
               quoteNumber,
             },
+          },
+        },
+        statusHistories: {
+          create: {
+            tenantId: input.tenantId,
+            fromStatus: null,
+            toStatus: 'ISSUED',
+            actorName: input.consultantName,
           },
         },
       },
@@ -273,9 +249,18 @@ export class QuoteRepository extends BaseRepository implements QuoteRepositoryPo
     return { data: data as unknown as QuoteRecord[], total };
   }
 
-  async findById(tenantId: string, id: string): Promise<QuoteRecord | null> {
+  async findById(tenantId: string | null, id: string): Promise<QuoteRecord | null> {
+    const where = tenantId ? { id, tenantId, deletedAt: null } : { id, deletedAt: null };
     const quote = await this.prisma.quote.findFirst({
-      where: { id, tenantId, deletedAt: null },
+      where,
+      include: quoteInclude,
+    });
+    return quote as unknown as QuoteRecord | null;
+  }
+
+  async findByNumber(quoteNumber: string): Promise<QuoteRecord | null> {
+    const quote = await this.prisma.quote.findFirst({
+      where: { quoteNumber, deletedAt: null },
       include: quoteInclude,
     });
     return quote as unknown as QuoteRecord | null;
@@ -284,16 +269,79 @@ export class QuoteRepository extends BaseRepository implements QuoteRepositoryPo
   async archive(tenantId: string, id: string, archivedAt: Date): Promise<QuoteRecord | null> {
     const existing = await this.prisma.quote.findFirst({
       where: { id, tenantId, deletedAt: null },
-      select: { id: true },
+      select: { id: true, status: true },
     });
     if (existing === null) {
       return null;
     }
-    const quote = await this.prisma.quote.update({
-      where: { id: existing.id },
-      data: { status: 'ARCHIVED', archivedAt },
-      include: quoteInclude,
+    const updated = await this.withTransaction(async (tx) => {
+      await tx.quoteStatusHistory.create({
+        data: {
+          tenantId,
+          quoteId: id,
+          fromStatus: existing.status,
+          toStatus: 'ARCHIVED',
+          actorName: 'System',
+        },
+      });
+      return tx.quote.update({
+        where: { id },
+        data: { status: 'ARCHIVED', archivedAt },
+        include: quoteInclude,
+      });
     });
-    return quote as unknown as QuoteRecord;
+    return updated as unknown as QuoteRecord;
+  }
+
+  async updateStatus(
+    tenantId: string | null,
+    idOrQuoteNumber: string,
+    newStatus: string,
+    actorName?: string,
+  ): Promise<QuoteRecord | null> {
+    const isUuid = idOrQuoteNumber.includes('-');
+    const whereClause = isUuid
+      ? tenantId
+        ? { id: idOrQuoteNumber, tenantId, deletedAt: null }
+        : { id: idOrQuoteNumber, deletedAt: null }
+      : tenantId
+        ? { quoteNumber: idOrQuoteNumber, tenantId, deletedAt: null }
+        : { quoteNumber: idOrQuoteNumber, deletedAt: null };
+
+    const existing = await this.prisma.quote.findFirst({
+      where: whereClause,
+      select: { id: true, tenantId: true, status: true },
+    });
+
+    if (existing === null) {
+      return null;
+    }
+
+    if (existing.status === newStatus) {
+      return this.findById(existing.tenantId, existing.id);
+    }
+
+    const updated = await this.withTransaction(async (tx) => {
+      await tx.quoteStatusHistory.create({
+        data: {
+          tenantId: existing.tenantId,
+          quoteId: existing.id,
+          fromStatus: existing.status,
+          toStatus: newStatus,
+          actorName: actorName ?? null,
+        },
+      });
+
+      return tx.quote.update({
+        where: { id: existing.id },
+        data: {
+          status: newStatus,
+          ...(newStatus === 'ARCHIVED' ? { archivedAt: new Date() } : {}),
+        },
+        include: quoteInclude,
+      });
+    });
+
+    return updated as unknown as QuoteRecord;
   }
 }

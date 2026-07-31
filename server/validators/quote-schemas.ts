@@ -1,14 +1,17 @@
 import { z } from 'zod';
 
-/**
- * Quote boundary validators — the only place raw quote payloads become
- * typed domain input. The client always sends the full seven-field
- * configuration snapshot; fields are individually nullable (an incomplete
- * dimension is a business error, caught by the service's completeness
- * check, not a validation error).
- */
-
 const nullableId = z.string().trim().min(1).nullish();
+
+const quoteStatusEnum = z.enum([
+  'DRAFT',
+  'ISSUED',
+  'VIEWED',
+  'ACCEPTED',
+  'REJECTED',
+  'EXPIRED',
+  'CANCELLED',
+  'ARCHIVED',
+]);
 
 export const quoteConfigurationSchema = z
   .object({
@@ -38,11 +41,19 @@ export const createQuoteSchema = z
   })
   .strict();
 
+export const updateQuoteStatusSchema = z
+  .object({
+    status: quoteStatusEnum,
+    actorName: z.string().trim().min(1).max(120).nullish(),
+  })
+  .strict();
+
 export const listQuotesQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
-  status: z.enum(['ISSUED', 'ARCHIVED']).optional(),
+  status: quoteStatusEnum.optional(),
 });
 
 export type CreateQuoteInput = z.infer<typeof createQuoteSchema>;
+export type UpdateQuoteStatusInput = z.infer<typeof updateQuoteStatusSchema>;
 export type ListQuotesQuery = z.infer<typeof listQuotesQuerySchema>;

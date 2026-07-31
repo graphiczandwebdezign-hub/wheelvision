@@ -71,6 +71,12 @@ function createPrismaFake(options: { quoteCreateFailures?: Error[] } = {}) {
         return { id: QUOTE_FIXTURE_IDS.savedConfigurationId };
       }),
     },
+    quoteStatusHistory: {
+      create: vi.fn(async (args: Record<string, unknown>) => {
+        record('quoteStatusHistory', 'create')(args);
+        return { id: 'hist-1' };
+      }),
+    },
     quote: {
       create: vi.fn(async (args: Record<string, unknown>) => {
         record('quote', 'create')(args);
