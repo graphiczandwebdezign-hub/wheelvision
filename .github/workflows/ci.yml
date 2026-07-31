@@ -4,6 +4,12 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
+
+env:
+  # Page-data collection instantiates PrismaClient at build time — give it a
+  # well-formed URL even though no queries run during `next build`.
+  DATABASE_URL: postgresql://postgres:postgres@localhost:5432/wheelvision
 
 jobs:
   quality:
@@ -14,8 +20,40 @@ jobs:
         with:
           node-version: 20
           cache: npm
-      - run: npm install --legacy-peer-deps
+      - run: npm ci --legacy-peer-deps
+      # Explicit, even though postinstall generates too: fail fast and clear.
+      - run: npx prisma generate
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run test
       - run: npm run build
+
+  e2e:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: wheelvision
+          POSTGRES_PASSWORD: wheelvision
+          POSTGRES_DB: wheelvision
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U wheelvision"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://wheelvision:wheelvision@localhost:5432/wheelvision
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci --legacy-peer-deps
+      - run: npx prisma generate
+      - run: npm run db:deploy
+      - run: npm run db:seed
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
