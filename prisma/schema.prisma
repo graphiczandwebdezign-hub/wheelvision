@@ -7,6 +7,10 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ===========================================================================
+// Multi-tenancy — every domain row belongs to exactly one tenant.
+// ===========================================================================
+
 model Tenant {
   id        String    @id @default(uuid()) @db.Uuid
   name      String
@@ -42,21 +46,40 @@ model Tenant {
   priceRules          PriceRule[]
   discountRules       DiscountRule[]
   quoteSnapshots      QuoteSnapshot[]
+  quoteStatusHistories QuoteStatusHistory[]
+  sessions            Session[]
+  settings            TenantSettings?
+  packages            VehiclePackage[]
 
   @@index([slug])
 }
 
-model User {
-  id        String    @id @default(uuid()) @db.Uuid
-  tenantId  String    @db.Uuid
-  email     String    @unique
-  name      String
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  deletedAt DateTime?
+// ===========================================================================
+// Identity & RBAC
+// ===========================================================================
 
-  tenant    Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  userRoles UserRole[]
+model User {
+  id                  String    @id @default(uuid()) @db.Uuid
+  tenantId            String    @db.Uuid
+  email               String    @unique
+  name                String
+  phone               String?
+  avatarUrl           String?
+  active              Boolean   @default(true)
+  isDefault           Boolean   @default(false)
+  passwordHash        String?
+  failedLoginAttempts Int       @default(0)
+  lockedUntil         DateTime?
+  emailVerified       Boolean   @default(false)
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  deletedAt           DateTime?
+
+  tenant                Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userRoles             UserRole[]
+  sessions              Session[]
+  passwordResetTokens   PasswordResetToken[]
+  emailVerificationTokens EmailVerificationToken[]
 
   @@index([tenantId])
   @@index([email])
@@ -92,6 +115,52 @@ model UserRole {
   @@index([roleId])
 }
 
+// ===========================================================================
+// Authentication sessions & tokens (Sprint 12)
+// ===========================================================================
+
+model Session {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  tenantId  String    @db.Uuid
+  token     String    @unique
+  ipAddress String?
+  userAgent String?
+  expiresAt DateTime
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
+
+model PasswordResetToken {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  token     String   @unique
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model EmailVerificationToken {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  token     String   @unique
+  expiresAt DateTime
+  verified  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ===========================================================================
+// Stores
+// ===========================================================================
+
 model Store {
   id        String    @id @default(uuid()) @db.Uuid
   tenantId  String    @db.Uuid
@@ -105,6 +174,10 @@ model Store {
 
   @@index([tenantId, name])
 }
+
+// ===========================================================================
+// Vehicle catalog
+// ===========================================================================
 
 model VehicleManufacturer {
   id        String    @id @default(uuid()) @db.Uuid
@@ -177,6 +250,10 @@ model VehicleColour {
   @@index([vehicleVariantId])
   @@unique([tenantId, vehicleVariantId, name])
 }
+
+// ===========================================================================
+// Wheel catalog
+// ===========================================================================
 
 model WheelBrand {
   id        String    @id @default(uuid()) @db.Uuid
@@ -251,6 +328,10 @@ model WheelSize {
   @@index([wheelModelId])
 }
 
+// ===========================================================================
+// Tyre catalog
+// ===========================================================================
+
 model TyreBrand {
   id        String    @id @default(uuid()) @db.Uuid
   tenantId  String    @db.Uuid
@@ -296,9 +377,9 @@ model TyreProfile {
   construction      String?
   loadIndex         Int?
   speedRating       String?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  deletedAt   DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  deletedAt         DateTime?
 
   tenant Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   model  TyreModel @relation(fields: [tyreModelId], references: [id], onDelete: Cascade)
@@ -307,6 +388,10 @@ model TyreProfile {
   @@index([tyreModelId])
   @@unique([tenantId, tyreModelId, profile])
 }
+
+// ===========================================================================
+// Saved configurations & customers
+// ===========================================================================
 
 model SavedConfiguration {
   id               String    @id @default(uuid()) @db.Uuid
@@ -352,6 +437,10 @@ model Customer {
   @@unique([tenantId, email])
 }
 
+// ===========================================================================
+// Quotes (Sprint 8–9)
+// ===========================================================================
+
 model Quote {
   id                   String    @id @default(uuid()) @db.Uuid
   tenantId             String    @db.Uuid
@@ -359,32 +448,88 @@ model Quote {
   savedConfigurationId String    @db.Uuid
   status               String
   totalAmount          Decimal   @db.Decimal(10, 2)
+  quoteNumber          String?
+  consultantName       String?
+  currency             String    @default("ZAR")
+  subtotalCents        Int?
+  discountCents        Int?
+  vatBasisPoints       Int?
+  vatCents             Int?
+  validUntil           DateTime?
+  archivedAt           DateTime?
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
   deletedAt            DateTime?
 
-  quoteNumber   String?
-  consultantName String?
-  currency      String   @default("ZAR")
-  subtotalCents Int?
-  discountCents Int?
-  vatBasisPoints Int?
-  vatCents      Int?
-  validUntil    DateTime?
-  archivedAt    DateTime?
-
-  tenant             Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  customer           Customer           @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  savedConfiguration SavedConfiguration @relation(fields: [savedConfigurationId], references: [id], onDelete: Cascade)
+  tenant             Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer           Customer            @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  savedConfiguration SavedConfiguration  @relation(fields: [savedConfigurationId], references: [id], onDelete: Cascade)
   assets             Asset[]
   lines              QuoteLine[]
   snapshot           QuoteSnapshot?
+  statusHistories    QuoteStatusHistory[]
 
   @@unique([tenantId, quoteNumber])
   @@index([tenantId, status])
   @@index([customerId])
   @@index([savedConfigurationId])
 }
+
+model QuoteLine {
+  id              String    @id @default(uuid()) @db.Uuid
+  quoteId         String    @db.Uuid
+  category        String
+  description     String
+  quantity        Int
+  unitAmountCents Int
+  totalCents      Int
+  sortOrder       Int       @default(0)
+  metadata        Json?
+  createdAt       DateTime  @default(now())
+
+  quote Quote @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+
+  @@index([quoteId])
+}
+
+model QuoteSnapshot {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @db.Uuid
+  quoteId   String   @unique @db.Uuid
+  version   Int      @default(1)
+  payload   Json
+  createdAt DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  quote  Quote  @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+}
+
+// ===========================================================================
+// Quote status history (Sprint 9 — lifecycle audit trail)
+// ===========================================================================
+
+model QuoteStatusHistory {
+  id         String    @id @default(uuid()) @db.Uuid
+  tenantId   String    @db.Uuid
+  quoteId    String    @db.Uuid
+  fromStatus String?
+  toStatus   String
+  actorName  String?
+  metadata   Json?
+  createdAt  DateTime  @default(now())
+  deletedAt  DateTime?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  quote  Quote  @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, quoteId])
+}
+
+// ===========================================================================
+// Assets
+// ===========================================================================
 
 model Asset {
   id        String    @id @default(uuid()) @db.Uuid
@@ -404,6 +549,10 @@ model Asset {
   @@index([quoteId])
 }
 
+// ===========================================================================
+// Audit log
+// ===========================================================================
+
 model AuditLog {
   id         String    @id @default(uuid()) @db.Uuid
   tenantId   String    @db.Uuid
@@ -422,10 +571,9 @@ model AuditLog {
   @@index([entityId])
 }
 
-
-// ---------------------------------------------------------------------------
-// Sprint 8 — Quote domain (additive; see migration 20260731150000_quote_domain)
-// ---------------------------------------------------------------------------
+// ===========================================================================
+// Pricing (Sprint 8)
+// ===========================================================================
 
 model PriceList {
   id        String    @id @default(uuid()) @db.Uuid
@@ -520,6 +668,10 @@ model LabourPrice {
   @@unique([priceListId, serviceType, unit])
 }
 
+// ===========================================================================
+// Discounts & promotions (Sprint 8, extended Sprint 10)
+// ===========================================================================
+
 model DiscountRule {
   id                 String    @id @default(uuid()) @db.Uuid
   tenantId           String    @db.Uuid
@@ -532,6 +684,8 @@ model DiscountRule {
   active             Boolean   @default(true)
   validFrom          DateTime?
   validTo            DateTime?
+  restrictions       Json?
+  metadata           Json?
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
   deletedAt          DateTime?
@@ -541,33 +695,59 @@ model DiscountRule {
   @@index([tenantId, active])
 }
 
-model QuoteLine {
-  id              String   @id @default(uuid()) @db.Uuid
-  quoteId         String   @db.Uuid
-  category        String
-  description     String
-  quantity        Int
-  unitAmountCents Int
-  totalCents      Int
-  sortOrder       Int      @default(0)
-  metadata        Json?
-  createdAt       DateTime @default(now())
+// ===========================================================================
+// Tenant/dealership settings (Sprint 10)
+// ===========================================================================
 
-  quote Quote @relation(fields: [quoteId], references: [id], onDelete: Cascade)
-
-  @@index([quoteId])
-}
-
-model QuoteSnapshot {
-  id        String   @id @default(uuid()) @db.Uuid
-  tenantId  String   @db.Uuid
-  quoteId   String   @unique @db.Uuid
-  version   Int      @default(1)
-  payload   Json
-  createdAt DateTime @default(now())
+model TenantSettings {
+  id                   String    @id @default(uuid()) @db.Uuid
+  tenantId             String    @unique @db.Uuid
+  dealerName           String?
+  address              String?
+  telephone            String?
+  email                String?
+  website              String?
+  vatNumber            String?
+  companyRegistration  String?
+  logoUrl              String?
+  quoteValidityDays    Int       @default(30)
+  currency             String    @default("ZAR")
+  timezone             String    @default("Africa/Johannesburg")
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+  deletedAt            DateTime?
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  quote  Quote  @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+}
 
-  @@index([tenantId])
+// ===========================================================================
+// Vehicle packages — admin publishing workflow (Sprint 11)
+// ===========================================================================
+
+model VehiclePackage {
+  id               String    @id @default(uuid()) @db.Uuid
+  tenantId         String    @db.Uuid
+  name             String
+  manufacturer     String
+  model            String
+  generation       String?
+  year             Int?
+  trim             String?
+  status           String    @default("DRAFT")
+  version          Int       @default(1)
+  publishedFlag    Boolean   @default(false)
+  colours          Json
+  wheelPositions   Json
+  wheelMetadata    Json?
+  tyreMetadata     Json?
+  renderMetadata   Json?
+  assetReferences  Json
+  validationState  Json
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  deletedAt        DateTime?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, status])
 }
