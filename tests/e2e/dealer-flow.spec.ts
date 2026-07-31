@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 
 /**
  * Dealer flow end-to-end: the full customer walk-through on the seeded demo
@@ -8,19 +8,30 @@ import { expect, test, type Page } from '@playwright/test';
  *
  * Catalog references track prisma/seed.ts exactly: the authored Toyota Hilux
  * package, the Rota R5 demo wheel and the Michelin Pilot Sport 4 demo tyre.
+ *
+ * Locator rule: Playwright's `name` matching is substring + case-insensitive,
+ * which silently collides across the three cascades ('Model' matches
+ * 'Rim model', 'Diameter' matches 'Filter sizes by diameter'). Every
+ * accessible-name lookup here is therefore exact — never rely on substring
+ * matching (or DOM order) in this spec.
  */
+const combobox = (page: Page, name: string): Locator =>
+  page.getByRole('combobox', { name, exact: true });
+const option = (page: Page, name: string): Locator =>
+  page.getByRole('option', { name, exact: true });
+const field = (page: Page, name: string): Locator => page.getByLabel(name, { exact: true });
 
 /** Walk the full seven-field configuration on the seeded demo catalog. */
 async function completeConfiguration(page: Page) {
   await page.goto('/preview');
 
   // Vehicle: manufacturer → model → year cascade resolves instantly.
-  await page.getByRole('combobox', { name: 'Manufacturer' }).click();
-  await page.getByRole('option', { name: 'Toyota' }).click();
-  await page.getByRole('combobox', { name: 'Model' }).click();
-  await page.getByRole('option', { name: 'Hilux' }).click();
-  await page.getByRole('combobox', { name: 'Year' }).click();
-  await page.getByRole('option', { name: '2025' }).click();
+  await combobox(page, 'Manufacturer').click();
+  await option(page, 'Toyota').click();
+  await combobox(page, 'Model').click();
+  await option(page, 'Hilux').click();
+  await combobox(page, 'Year').click();
+  await option(page, '2025').click();
 
   // The canvas card titles itself with the resolved vehicle.
   await expect(page.getByRole('heading', { name: /2025 Toyota Hilux/ })).toBeVisible();
@@ -31,21 +42,21 @@ async function completeConfiguration(page: Page) {
   await expect(colour).toHaveAttribute('aria-pressed', 'true');
 
   // Wheels: brand → model → finish → size (the seeded Rota R5 demo wheel).
-  await page.getByRole('combobox', { name: 'Rim brand' }).click();
-  await page.getByRole('option', { name: 'Rota' }).click();
-  await page.getByRole('combobox', { name: 'Rim model' }).click();
-  await page.getByRole('option', { name: 'R5' }).click();
-  await page.getByLabel('Rim finish').selectOption({ label: 'Gloss Black' });
-  await page.getByLabel('Rim size').selectOption({ index: 1 });
+  await combobox(page, 'Rim brand').click();
+  await option(page, 'Rota').click();
+  await combobox(page, 'Rim model').click();
+  await option(page, 'R5').click();
+  await field(page, 'Rim finish').selectOption({ label: 'Gloss Black' });
+  await field(page, 'Rim size').selectOption({ index: 1 });
 
   // Tyres: brand → pattern → width → profile → diameter.
-  await page.getByRole('combobox', { name: 'Tyre brand' }).click();
-  await page.getByRole('option', { name: 'Michelin' }).click();
-  await page.getByRole('combobox', { name: 'Tyre pattern' }).click();
-  await page.getByRole('option', { name: 'Pilot Sport 4' }).click();
-  await page.getByLabel('Width').selectOption({ index: 1 });
-  await page.getByLabel('Profile', { exact: true }).selectOption({ index: 1 });
-  await page.getByLabel('Diameter').selectOption({ index: 1 });
+  await combobox(page, 'Tyre brand').click();
+  await option(page, 'Michelin').click();
+  await combobox(page, 'Tyre pattern').click();
+  await option(page, 'Pilot Sport 4').click();
+  await field(page, 'Width').selectOption({ index: 1 });
+  await field(page, 'Profile').selectOption({ index: 1 });
+  await field(page, 'Diameter').selectOption({ index: 1 });
   await expect(page.getByText(/Selected profile:/)).toBeVisible();
 }
 
@@ -107,8 +118,8 @@ test.describe('dealer configuration flow', () => {
   }) => {
     await page.goto('/preview');
 
-    await page.getByRole('combobox', { name: 'Manufacturer' }).click();
-    await page.getByRole('option', { name: 'Toyota' }).click();
+    await combobox(page, 'Manufacturer').click();
+    await option(page, 'Toyota').click();
     await expect(page.getByRole('heading', { name: /Hilux/ })).toBeVisible();
 
     // Build the link the same way the running app would, then open it in a
