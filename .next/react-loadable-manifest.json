@@ -1,1 +1,10 @@
-{}
+{
+  "node_modules/@tanstack/query-devtools/build/index.js -> ./DevtoolsComponent/ZXV6FBN7.js": {
+    "id": null,
+    "files": []
+  },
+  "node_modules/@tanstack/query-devtools/build/index.js -> ./DevtoolsPanelComponent/MO2VZFYH.js": {
+    "id": null,
+    "files": []
+  }
+}

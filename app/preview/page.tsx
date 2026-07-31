@@ -1,4 +1,4 @@
-import { VehiclePreview } from '@/components/vehicle-preview';
+import { VehiclePreview } from '@/features/preview/components/vehicle-preview';
 
 export default function PreviewPage() {
   return (

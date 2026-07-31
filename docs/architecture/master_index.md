@@ -8,34 +8,34 @@
 
 ## Chapter index
 
-| Chapter | Title | Status |
-|---|---|---|
-| 1 | Executive Summary | Complete |
-| 2 | Product Requirements Specification | Complete |
-| 3 | System Architecture | Complete |
-| 4 | Domain Driven Design | Complete |
-| 5 | Database Architecture | Complete |
-| 6 | Metadata Specification | Complete |
-| 7 | Rendering Engine | Complete |
-| 8 | Asset Pipeline | Complete |
-| 9 | Vehicle Module | Complete |
-| 10 | Wheel Module | Complete |
-| 11 | Tyre Module | Complete |
-| 12 | Rendering Mathematics | Complete |
-| 13 | State Management | Complete |
-| 14 | API Specification | Complete |
-| 15 | Authentication | Complete |
-| 16 | Multi-Tenant Architecture | Complete |
-| 17 | Admin Portal | Complete |
-| 18 | AI Asset Pipeline | Complete |
-| 19 | Quote System | Complete |
-| 20 | Security | Complete |
-| 21 | Performance Engineering | Complete |
-| 22 | Infrastructure | Complete |
-| 23 | Testing | Complete |
-| 24 | CI/CD | Complete |
-| 25 | Development Standards | Complete |
-| 26 | Future Roadmap | Complete |
+| Chapter | Title                              | Status   |
+| ------- | ---------------------------------- | -------- |
+| 1       | Executive Summary                  | Complete |
+| 2       | Product Requirements Specification | Complete |
+| 3       | System Architecture                | Complete |
+| 4       | Domain Driven Design               | Complete |
+| 5       | Database Architecture              | Complete |
+| 6       | Metadata Specification             | Complete |
+| 7       | Rendering Engine                   | Complete |
+| 8       | Asset Pipeline                     | Complete |
+| 9       | Vehicle Module                     | Complete |
+| 10      | Wheel Module                       | Complete |
+| 11      | Tyre Module                        | Complete |
+| 12      | Rendering Mathematics              | Complete |
+| 13      | State Management                   | Complete |
+| 14      | API Specification                  | Complete |
+| 15      | Authentication                     | Complete |
+| 16      | Multi-Tenant Architecture          | Complete |
+| 17      | Admin Portal                       | Complete |
+| 18      | AI Asset Pipeline                  | Complete |
+| 19      | Quote System                       | Complete |
+| 20      | Security                           | Complete |
+| 21      | Performance Engineering            | Complete |
+| 22      | Infrastructure                     | Complete |
+| 23      | Testing                            | Complete |
+| 24      | CI/CD                              | Complete |
+| 25      | Development Standards              | Complete |
+| 26      | Future Roadmap                     | Complete |
 
 ## Architecture principles
 
