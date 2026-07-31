@@ -36,7 +36,7 @@ async function completeConfiguration(page: Page) {
   // The canvas card titles itself with the resolved vehicle.
   await expect(page.getByRole('heading', { name: /2025 Toyota Hilux/ })).toBeVisible();
 
-  // Colour chip toggles.
+  // Colour chip toggles (mounted once, inside VehicleSelector).
   const colour = page.getByRole('button', { name: 'Silver', exact: true });
   await colour.click();
   await expect(colour).toHaveAttribute('aria-pressed', 'true');
@@ -64,9 +64,9 @@ test.describe('dealer configuration flow', () => {
   test('walks vehicle → wheels → tyres and can save + restore', async ({ page }) => {
     await completeConfiguration(page);
 
-    // Save → toast → survives a reload.
+    // Save → toast carries the saved label on this device → reload survives.
     await page.getByRole('button', { name: 'Save configuration on this device' }).click();
-    await expect(page.getByText('Configuration saved on this device.')).toBeVisible();
+    await expect(page.getByText(/Saved “[^”]+” on this device\./)).toBeVisible();
 
     await page.reload();
     await expect(page.getByRole('heading', { name: /2025 Toyota Hilux/ })).toBeVisible();
@@ -98,18 +98,22 @@ test.describe('dealer configuration flow', () => {
     await dialog.getByRole('button', { name: 'Issue quotation' }).click();
 
     // View: the immutable issued quotation with reference and VAT totals.
+    // First API hit in dev can cold-compile the route — allow for that.
     const quotation = page.getByRole('dialog', { name: 'Quotation' });
-    await expect(quotation).toBeVisible();
+    await expect(quotation).toBeVisible({ timeout: 45_000 });
     await expect(quotation.getByText(/WV-2026-\d{6}/).first()).toBeVisible();
     await expect(quotation.getByText('Total (VAT incl.)').first()).toBeVisible();
     await expect(quotation.getByText('Mrs Nkosi').first()).toBeVisible();
 
-    // The issued quote is listed in the tenant's quote history.
-    await page.getByRole('button', { name: 'Close dialog' }).click();
+    // The issued quote is listed in the tenant's quote history. Close via
+    // the keyboard contract (Escape) — deterministic even under overlays.
+    await page.keyboard.press('Escape');
+    await expect(quotation).toBeHidden({ timeout: 10_000 });
     await page.getByRole('button', { name: 'View quote history' }).click();
     const history = page.getByRole('dialog', { name: 'Quote history' });
     await expect(history).toBeVisible();
-    await expect(history.getByText(/WV-2026-\d{6}/)).toBeVisible();
+    // First hit of the list endpoint may cold-compile as well.
+    await expect(history.getByText(/WV-2026-\d{6}/)).toBeVisible({ timeout: 45_000 });
   });
 
   test('shared configuration link restores the selection on a fresh device', async ({
