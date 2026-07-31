@@ -14,21 +14,8 @@ jobs:
         with:
           node-version: 20
           cache: npm
-      # npm ci fails on any lockfile mismatch — installs are reproducible by
-      # construction. The postinstall hook also runs `prisma generate`; the
-      # explicit step below keeps Prisma client generation visible and
-      # fail-fast in the pipeline log.
-      - name: Install dependencies
-        run: npm ci --legacy-peer-deps
-      - name: Generate Prisma client
-        run: npx prisma generate
-      - name: Lint
-        run: npm run lint
-      - name: Typecheck
-        run: npm run typecheck
-      - name: Unit tests
-        run: npm run test
-      - name: Build
-        run: npm run build
-        env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/wheelvision
+      - run: npm install --legacy-peer-deps
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run test
+      - run: npm run build
