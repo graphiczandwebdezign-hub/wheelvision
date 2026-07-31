@@ -1,0 +1,375 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Tenant {
+  id        String    @id @default(uuid()) @db.Uuid
+  name      String
+  slug      String    @unique
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  users               User[]
+  roles               Role[]
+  stores              Store[]
+  manufacturers       VehicleManufacturer[]
+  models              VehicleModel[]
+  variants            VehicleVariant[]
+  colours             VehicleColour[]
+  wheelBrands         WheelBrand[]
+  wheelModels         WheelModel[]
+  wheelFinishes       WheelFinish[]
+  wheelSizes          WheelSize[]
+  tyreBrands          TyreBrand[]
+  tyreModels          TyreModel[]
+  tyreProfiles        TyreProfile[]
+  savedConfigurations SavedConfiguration[]
+  customers           Customer[]
+  quotes              Quote[]
+  assets              Asset[]
+  auditLogs           AuditLog[]
+
+  @@index([slug])
+}
+
+model User {
+  id        String    @id @default(uuid()) @db.Uuid
+  tenantId  String    @db.Uuid
+  email     String    @unique
+  name      String
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  tenant    Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userRoles UserRole[]
+
+  @@index([tenantId])
+  @@index([email])
+}
+
+model Role {
+  id        String    @id @default(uuid()) @db.Uuid
+  tenantId  String    @db.Uuid
+  name      String
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  tenant    Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userRoles UserRole[]
+
+  @@index([tenantId, name])
+}
+
+model UserRole {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  roleId    String    @db.Uuid
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId])
+  @@index([userId])
+  @@index([roleId])
+}
+
+model Store {
+  id        String    @id @default(uuid()) @db.Uuid
+  tenantId  String    @db.Uuid
+  name      String
+  location  String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, name])
+}
+
+model VehicleManufacturer {
+  id        String    @id @default(uuid()) @db.Uuid
+  tenantId  String    @db.Uuid
+  name      String
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  tenant Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  models VehicleModel[]
+
+  @@index([tenantId, name])
+}
+
+model VehicleModel {
+  id                    String    @id @default(uuid()) @db.Uuid
+  tenantId              String    @db.Uuid
+  vehicleManufacturerId String    @db.Uuid
+  name                  String
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  deletedAt             DateTime?
+
+  tenant              Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  manufacturer        VehicleManufacturer  @relation(fields: [vehicleManufacturerId], references: [id], onDelete: Cascade)
+  variants            VehicleVariant[]
+  savedConfigurations SavedConfiguration[]
+
+  @@index([tenantId, name])
+  @@index([vehicleManufacturerId])
+}
+
+model VehicleVariant {
+  id              String    @id @default(uuid()) @db.Uuid
+  tenantId        String    @db.Uuid
+  vehicleModelId  String    @db.Uuid
+  name            String
+  wheelDiameterMm Int
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  deletedAt       DateTime?
+
+  tenant         Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  model          VehicleModel         @relation(fields: [vehicleModelId], references: [id], onDelete: Cascade)
+  colours        VehicleColour[]
+  configurations SavedConfiguration[]
+
+  @@index([tenantId, name])
+  @@index([vehicleModelId])
+}
+
+model VehicleColour {
+  id               String    @id @default(uuid()) @db.Uuid
+  tenantId         String    @db.Uuid
+  vehicleVariantId String    @db.Uuid
+  name             String
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  deletedAt        DateTime?
+
+  tenant  Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  variant VehicleVariant @relation(fields: [vehicleVariantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, name])
+  @@index([vehicleVariantId])
+}
+
+model WheelBrand {
+  id        String    @id @default(uuid()) @db.Uuid
+  tenantId  String    @db.Uuid
+  name      String
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  tenant Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  models WheelModel[]
+
+  @@index([tenantId, name])
+}
+
+model WheelModel {
+  id           String    @id @default(uuid()) @db.Uuid
+  tenantId     String    @db.Uuid
+  wheelBrandId String    @db.Uuid
+  name         String
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime?
+
+  tenant         Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  brand          WheelBrand           @relation(fields: [wheelBrandId], references: [id], onDelete: Cascade)
+  finishes       WheelFinish[]
+  configurations SavedConfiguration[]
+
+  @@index([tenantId, name])
+  @@index([wheelBrandId])
+}
+
+model WheelFinish {
+  id           String    @id @default(uuid()) @db.Uuid
+  tenantId     String    @db.Uuid
+  wheelModelId String    @db.Uuid
+  name         String
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime?
+
+  tenant Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  model  WheelModel @relation(fields: [wheelModelId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, name])
+  @@index([wheelModelId])
+}
+
+model WheelSize {
+  id        String    @id @default(uuid()) @db.Uuid
+  tenantId  String    @db.Uuid
+  size      String
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, size])
+}
+
+model TyreBrand {
+  id        String    @id @default(uuid()) @db.Uuid
+  tenantId  String    @db.Uuid
+  name      String
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  tenant Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  models TyreModel[]
+
+  @@index([tenantId, name])
+}
+
+model TyreModel {
+  id          String    @id @default(uuid()) @db.Uuid
+  tenantId    String    @db.Uuid
+  tyreBrandId String    @db.Uuid
+  name        String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  tenant         Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  brand          TyreBrand            @relation(fields: [tyreBrandId], references: [id], onDelete: Cascade)
+  profiles       TyreProfile[]
+  configurations SavedConfiguration[]
+
+  @@index([tenantId, name])
+  @@index([tyreBrandId])
+}
+
+model TyreProfile {
+  id          String    @id @default(uuid()) @db.Uuid
+  tenantId    String    @db.Uuid
+  tyreModelId String    @db.Uuid
+  profile     String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  tenant Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  model  TyreModel @relation(fields: [tyreModelId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, profile])
+  @@index([tyreModelId])
+}
+
+model SavedConfiguration {
+  id               String    @id @default(uuid()) @db.Uuid
+  tenantId         String    @db.Uuid
+  vehicleVariantId String    @db.Uuid
+  vehicleModelId   String    @db.Uuid
+  wheelModelId     String    @db.Uuid
+  tyreModelId      String    @db.Uuid
+  name             String
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  deletedAt        DateTime?
+
+  tenant         Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  vehicleVariant VehicleVariant @relation(fields: [vehicleVariantId], references: [id], onDelete: Cascade)
+  vehicleModel   VehicleModel   @relation(fields: [vehicleModelId], references: [id], onDelete: Cascade)
+  wheelModel     WheelModel     @relation(fields: [wheelModelId], references: [id], onDelete: Cascade)
+  tyreModel      TyreModel      @relation(fields: [tyreModelId], references: [id], onDelete: Cascade)
+  quotes         Quote[]
+
+  @@index([tenantId, name])
+  @@index([vehicleVariantId])
+  @@index([vehicleModelId])
+  @@index([wheelModelId])
+  @@index([tyreModelId])
+}
+
+model Customer {
+  id        String    @id @default(uuid()) @db.Uuid
+  tenantId  String    @db.Uuid
+  name      String
+  email     String?
+  phone     String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  tenant Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  quotes Quote[]
+
+  @@index([tenantId, name])
+  @@index([email])
+}
+
+model Quote {
+  id                   String    @id @default(uuid()) @db.Uuid
+  tenantId             String    @db.Uuid
+  customerId           String    @db.Uuid
+  savedConfigurationId String    @db.Uuid
+  status               String
+  totalAmount          Decimal   @db.Decimal(10, 2)
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+  deletedAt            DateTime?
+
+  tenant             Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer           Customer           @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  savedConfiguration SavedConfiguration @relation(fields: [savedConfigurationId], references: [id], onDelete: Cascade)
+  assets             Asset[]
+
+  @@index([tenantId, status])
+  @@index([customerId])
+  @@index([savedConfigurationId])
+}
+
+model Asset {
+  id        String    @id @default(uuid()) @db.Uuid
+  tenantId  String    @db.Uuid
+  quoteId   String?   @db.Uuid
+  fileName  String
+  mimeType  String
+  url       String
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  quote  Quote? @relation(fields: [quoteId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, fileName])
+  @@index([quoteId])
+}
+
+model AuditLog {
+  id         String    @id @default(uuid()) @db.Uuid
+  tenantId   String    @db.Uuid
+  entityType String
+  entityId   String    @db.Uuid
+  action     String
+  actorId    String?   @db.Uuid
+  details    String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  deletedAt  DateTime?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, entityType])
+  @@index([entityId])
+}

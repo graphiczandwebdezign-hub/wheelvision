@@ -29,6 +29,9 @@ declare namespace __next_route_internal_types__ {
     S extends `${string}${SearchOrHash}` ? never : S
 
   type StaticRoutes = 
+    | `/api/health`
+    | `/api/vehicles`
+    | `/api/wheels`
     | `/admin`
     | `/`
     | `/preview`
