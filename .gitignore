@@ -1,20 +1,15 @@
-# dependencies
-node_modules/
+# v0 sandbox internal files
+__v0_runtime_loader.js
+__v0_devtools.tsx
+__v0_jsx-dev-runtime.ts
+.snowflake/
+.v0-trash/
+.vercel/
 
-# build output
+# Environment variables
+.env*.local
+
+# Common ignores
+node_modules
 .next/
-out/
-dist/
-
-# test coverage and reports
-coverage/
-playwright-report/
-test-results/
-
-# TypeScript incremental build info
-*.tsbuildinfo
-
-# environment files (.env.example is intentionally tracked)
-.env
-.env.*
-!.env.example
+.DS_Store
