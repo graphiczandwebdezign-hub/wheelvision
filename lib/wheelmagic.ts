@@ -487,6 +487,8 @@ export interface DetectionResult {
   metadata: WheelMetadata
   steps: DetectionStep[]
   circularity: number
+  /** 'alpha' = prepared silhouette (transparent holes), 'photo' = real image. */
+  mode: 'alpha' | 'photo'
 }
 
 interface Blob {
@@ -500,13 +502,38 @@ interface Blob {
 }
 
 /**
- * detectWheels — mimics the OpenCV.js pipeline:
+ * detectWheels — dispatcher. Inspects the image's transparency: prepared
+ * silhouettes carry large transparent regions (the punched wheel holes), while
+ * real photographs are fully opaque. Alpha images use the fast flood-fill
+ * pipeline; opaque photos fall through to a real Hough circle transform.
+ */
+export function detectWheels(
+  imageData: ImageData,
+  targetW: number,
+  targetH: number,
+): DetectionResult {
+  const { data, width, height } = imageData
+  let transparent = 0
+  for (let i = 0; i < width * height; i++) {
+    if (data[i * 4 + 3] < 10) transparent++
+  }
+  const transparentRatio = transparent / (width * height)
+  // A prepared silhouette has meaningful interior transparency; a JPEG/photo
+  // has ~none. Below the threshold we treat it as a real photograph.
+  if (transparentRatio < 0.02) {
+    return detectWheelsPhoto(imageData, targetW, targetH)
+  }
+  return detectWheelsAlpha(imageData, targetW, targetH)
+}
+
+/**
+ * detectWheelsAlpha — the prepared-silhouette pipeline:
  *  1. Alpha Extracted   -> read alpha channel of the prepared PNG
  *  2. Mask Cleaned      -> threshold alpha < 10 into a binary transparent mask
  *  3. Contours Found    -> flood-fill connected transparent regions (blobs)
  *  4. Circularity       -> keep the 2 largest circular blobs, fit bounding circle
  */
-export function detectWheels(
+export function detectWheelsAlpha(
   imageData: ImageData,
   targetW: number,
   targetH: number,
@@ -621,7 +648,253 @@ export function detectWheels(
     { label: `Circularity ${circularity.toFixed(2)}`, detail: 'circles accepted' },
   ]
 
-  return { metadata, steps, circularity }
+  return { metadata, steps, circularity, mode: 'alpha' }
+}
+
+// ---------------------------------------------------------------------------
+// PHOTO PIPELINE — real Hough Circle Transform on an opaque vehicle photo.
+// Detects wheels straight from image edges with no transparency required.
+//   1. Grayscale       -> luminance conversion
+//   2. Sobel Edges      -> gradient magnitude + direction, threshold to edges
+//   3. Hough Voting     -> each edge votes for centers along its gradient line
+//                          across a plausible wheel-radius band
+//   4. Peak + Pairing   -> NMS peaks, then choose the best coplanar wheel pair
+// ---------------------------------------------------------------------------
+interface Candidate {
+  x: number
+  y: number
+  r: number
+  score: number
+}
+
+export function detectWheelsPhoto(
+  imageData: ImageData,
+  targetW: number,
+  targetH: number,
+): DetectionResult {
+  const { data, width, height } = imageData
+  const n = width * height
+
+  // --- Step 1: grayscale luminance ---
+  const gray = new Float32Array(n)
+  for (let i = 0; i < n; i++) {
+    const o = i * 4
+    gray[i] = 0.299 * data[o] + 0.587 * data[o + 1] + 0.114 * data[o + 2]
+  }
+
+  // --- Step 2: Sobel gradients -> edge points with unit gradient direction ---
+  const edgeX: number[] = []
+  const edgeY: number[] = []
+  const dirX: number[] = []
+  const dirY: number[] = []
+  let magSum = 0
+  const mags: number[] = []
+  const px: number[] = []
+  const py: number[] = []
+  const ux: number[] = []
+  const uy: number[] = []
+  for (let y = 1; y < height - 1; y++) {
+    for (let x = 1; x < width - 1; x++) {
+      const i = y * width + x
+      const tl = gray[i - width - 1]
+      const tc = gray[i - width]
+      const tr = gray[i - width + 1]
+      const ml = gray[i - 1]
+      const mr = gray[i + 1]
+      const bl = gray[i + width - 1]
+      const bc = gray[i + width]
+      const br = gray[i + width + 1]
+      const gx = tr + 2 * mr + br - tl - 2 * ml - bl
+      const gy = bl + 2 * bc + br - tl - 2 * tc - tr
+      const mag = Math.sqrt(gx * gx + gy * gy)
+      mags.push(mag)
+      px.push(x)
+      py.push(y)
+      ux.push(gx / (mag || 1))
+      uy.push(gy / (mag || 1))
+      magSum += mag
+    }
+  }
+  // adaptive edge threshold: keep the strongest gradients only
+  const meanMag = magSum / mags.length
+  const edgeThresh = meanMag * 1.9
+  for (let k = 0; k < mags.length; k++) {
+    if (mags[k] >= edgeThresh) {
+      edgeX.push(px[k])
+      edgeY.push(py[k])
+      dirX.push(ux[k])
+      dirY.push(uy[k])
+    }
+  }
+
+  // --- Step 3: gradient-based Hough voting into a center accumulator ---
+  const acc = new Float32Array(n)
+  const rMin = Math.max(6, Math.round(width * 0.05))
+  const rMax = Math.round(width * 0.2)
+  const rStep = Math.max(1, Math.round((rMax - rMin) / 26))
+  const yBias = height * 0.55 // wheels sit in the lower half of a sideview
+  for (let e = 0; e < edgeX.length; e++) {
+    const ex = edgeX[e]
+    const ey = edgeY[e]
+    const gxu = dirX[e]
+    const gyu = dirY[e]
+    for (let r = rMin; r <= rMax; r += rStep) {
+      // vote both along and against the gradient (dark tyre vs bright rim)
+      for (const s of [1, -1]) {
+        const cx = Math.round(ex + s * gxu * r)
+        const cy = Math.round(ey + s * gyu * r)
+        if (cx < 0 || cy < 0 || cx >= width || cy >= height) continue
+        // favour centers in the lower half where wheels live
+        const bias = cy >= yBias ? 1 : 0.45
+        acc[cy * width + cx] += bias
+      }
+    }
+  }
+
+  // --- Step 4a: non-max suppression to extract distinct center peaks ---
+  const candidates: Candidate[] = []
+  const supp = Math.round(rMin * 0.8)
+  const accCopy = Float32Array.from(acc)
+  let maxVote = 0
+  for (let i = 0; i < n; i++) if (accCopy[i] > maxVote) maxVote = accCopy[i]
+  const voteFloor = maxVote * 0.35
+  for (let pass = 0; pass < 8; pass++) {
+    let bestIdx = -1
+    let bestVal = voteFloor
+    for (let i = 0; i < n; i++) {
+      if (accCopy[i] > bestVal) {
+        bestVal = accCopy[i]
+        bestIdx = i
+      }
+    }
+    if (bestIdx < 0) break
+    const cx = bestIdx % width
+    const cy = (bestIdx / width) | 0
+    // estimate best radius: circle with the most edge support (normalised)
+    let bestR = rMin
+    let bestSupport = 0
+    for (let r = rMin; r <= rMax; r += rStep) {
+      let hits = 0
+      const tol = Math.max(2, r * 0.12)
+      for (let e = 0; e < edgeX.length; e++) {
+        const dx = edgeX[e] - cx
+        const dy = edgeY[e] - cy
+        const dist = Math.sqrt(dx * dx + dy * dy)
+        if (Math.abs(dist - r) <= tol) hits++
+      }
+      const norm = hits / (2 * Math.PI * r)
+      if (norm > bestSupport) {
+        bestSupport = norm
+        bestR = r
+      }
+    }
+    candidates.push({ x: cx, y: cy, r: bestR, score: bestVal })
+    // suppress a neighbourhood so the next peak is a different wheel
+    for (let yy = Math.max(0, cy - supp); yy < Math.min(height, cy + supp); yy++) {
+      for (let xx = Math.max(0, cx - supp); xx < Math.min(width, cx + supp); xx++) {
+        accCopy[yy * width + xx] = 0
+      }
+    }
+  }
+
+  // --- Step 4b: pick the best coplanar, similarly-sized wheel pair ---
+  let pair: [Candidate, Candidate] | null = null
+  let pairScore = -Infinity
+  for (let a = 0; a < candidates.length; a++) {
+    for (let b = a + 1; b < candidates.length; b++) {
+      const A = candidates[a]
+      const B = candidates[b]
+      const dx = Math.abs(A.x - B.x)
+      const dy = Math.abs(A.y - B.y)
+      const rAvg = (A.r + B.r) / 2
+      if (dx < rAvg * 1.4) continue // must be separated horizontally
+      const yPenalty = dy / (height * 0.25) // reward similar vertical position
+      const rPenalty = Math.abs(A.r - B.r) / rAvg
+      const s = A.score + B.score - yPenalty * maxVote - rPenalty * maxVote * 0.6
+      if (s > pairScore) {
+        pairScore = s
+        pair = A.x <= B.x ? [A, B] : [B, A]
+      }
+    }
+  }
+
+  // --- Step 4c: unify the pair's radius. Real vehicle wheels are the same
+  //   size, so re-estimate a single shared radius that maximises combined
+  //   edge support at BOTH centers. This corrects a wheel-arch/shadow edge
+  //   pulling one circle too large.
+  if (pair) {
+    const [A, B] = pair
+    let bestR = (A.r + B.r) / 2
+    let bestCombined = -1
+    const supportAt = (cx: number, cy: number, r: number) => {
+      let hits = 0
+      const tol = Math.max(2, r * 0.1)
+      for (let e = 0; e < edgeX.length; e++) {
+        const dx = edgeX[e] - cx
+        const dy = edgeY[e] - cy
+        const dist = Math.sqrt(dx * dx + dy * dy)
+        if (Math.abs(dist - r) <= tol) hits++
+      }
+      return hits / (2 * Math.PI * r)
+    }
+    for (let r = rMin; r <= rMax; r += rStep) {
+      const combined = supportAt(A.x, A.y, r) + supportAt(B.x, B.y, r)
+      if (combined > bestCombined) {
+        bestCombined = combined
+        bestR = r
+      }
+    }
+    A.r = bestR
+    B.r = bestR
+  }
+
+  const fallback = wheelGeometry(targetW, targetH)
+  const scaleX = targetW / width
+  const scaleY = targetH / height
+  const toPoint = (c: Candidate | undefined, fb: WheelPoint): WheelPoint => {
+    if (!c) return fb
+    return {
+      x: Math.round(c.x * scaleX),
+      y: Math.round(c.y * scaleY),
+      radius: Math.round(c.r * ((scaleX + scaleY) / 2)),
+    }
+  }
+
+  let front: WheelPoint
+  let rear: WheelPoint
+  let found = 0
+  if (pair) {
+    front = toPoint(pair[0], fallback.front)
+    rear = toPoint(pair[1], fallback.rear)
+    found = 2
+  } else if (candidates.length > 0) {
+    const only = candidates[0]
+    front = toPoint(only, fallback.front)
+    // mirror across image center for the missing wheel
+    rear = {
+      x: Math.round((width - only.x) * scaleX),
+      y: front.y,
+      radius: front.radius,
+    }
+    found = 1
+  } else {
+    front = fallback.front
+    rear = fallback.rear
+  }
+
+  const metadata: WheelMetadata = { front, rear }
+  const circularity = candidates[0]
+    ? Math.min(0.999, 0.8 + candidates[0].score / (maxVote || 1) * 0.19)
+    : 0.9
+
+  const steps: DetectionStep[] = [
+    { label: 'Grayscale', detail: `${n.toLocaleString()} px · luminance` },
+    { label: 'Sobel Edges', detail: `${edgeX.length.toLocaleString()} edge px · τ=${edgeThresh.toFixed(0)}` },
+    { label: 'Hough Voting', detail: `r ∈ [${rMin},${rMax}]px · peak ${maxVote.toFixed(0)}` },
+    { label: `${found} Wheels Detected`, detail: `${candidates.length} circle candidates` },
+  ]
+
+  return { metadata, steps, circularity, mode: 'photo' }
 }
 
 // ===========================================================================
@@ -631,6 +904,12 @@ export interface RenderOptions {
   scale: number
   showFront: boolean
   showRear: boolean
+  /**
+   * 'behind' (default) paints rims behind a prepared silhouette so its
+   * transparent holes reveal them. 'on-top' paints rims over a real photo,
+   * clipped to the detected wheel circle, replacing the original wheel face.
+   */
+  overlayMode?: 'behind' | 'on-top'
 }
 
 const SIZE_MARKS: Record<number, number> = { 17: 0.77, 18: 0.82, 20: 0.91, 22: 1.0 }
@@ -677,8 +956,36 @@ export function renderComposition(
       ]
     : []
 
-  // 1) Paint rims BEHIND the vehicle so the vehicle's transparent holes reveal
-  //    them, and the opaque bodywork masks any overspill automatically.
+  const onTop = opts.overlayMode === 'on-top'
+
+  if (onTop) {
+    // PHOTO MODE: draw the photo first, then paint rims OVER each detected
+    // wheel, clipped to the detected circle, replacing the original face.
+    ctx.drawImage(vehicle, 0, 0, width, height)
+    if (rim && metadata) {
+      for (const [p, visible] of points) {
+        if (!visible) continue
+        const drawSize = p.radius * 2 * opts.scale
+        ctx.save()
+        ctx.beginPath()
+        ctx.arc(p.x, p.y, p.radius * opts.scale, 0, Math.PI * 2)
+        ctx.clip()
+        ctx.imageSmoothingEnabled = true
+        ctx.imageSmoothingQuality = 'high'
+        // soft dark backing to hide the original rim edges
+        ctx.fillStyle = '#0a0a0a'
+        ctx.beginPath()
+        ctx.arc(p.x, p.y, p.radius * opts.scale, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.drawImage(rim, p.x - drawSize / 2, p.y - drawSize / 2, drawSize, drawSize)
+        ctx.restore()
+      }
+    }
+    return
+  }
+
+  // 1) SILHOUETTE MODE: paint rims BEHIND the vehicle so the transparent holes
+  //    reveal them, and the opaque bodywork masks any overspill automatically.
   if (rim && metadata) {
     for (const [p, visible] of points) {
       if (!visible) continue

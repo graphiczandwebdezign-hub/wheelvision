@@ -49,9 +49,9 @@ export function VehicleLibrary({ activeVehicleId, onSelect, onUpload }: Props) {
         )}
       >
         <UploadCloud className="h-6 w-6" />
-        <div className="text-xs font-medium">Drop prepared PNG</div>
+        <div className="text-xs font-medium">Drop a vehicle image</div>
         <div className="font-mono text-[10px] text-muted-foreground">
-          transparent wheel holes
+          photo or prepared PNG · auto-detects wheels
         </div>
         <input
           ref={inputRef}

@@ -34,6 +34,7 @@ export default function Page() {
   const [steps, setSteps] = useState<DetectionStep[]>([])
   const [detecting, setDetecting] = useState(false)
   const [fps, setFps] = useState(60)
+  const [photoMode, setPhotoMode] = useState(false)
 
   // ---- canvas asset stores ----
   const vehicleCanvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -61,9 +62,9 @@ export default function Page() {
       vehicleCanvasRef.current,
       rimCanvasRef.current,
       metadata,
-      { scale, showFront, showRear },
+      { scale, showFront, showRear, overlayMode: photoMode ? 'on-top' : 'behind' },
     )
-  }, [metadata, scale, showFront, showRear])
+  }, [metadata, scale, showFront, showRear, photoMode])
 
   // ---- run the detection pipeline on a vehicle canvas ----
   const runDetection = useCallback((vehicleCanvas: HTMLCanvasElement) => {
@@ -84,6 +85,7 @@ export default function Page() {
       setTimeout(() => {
         setSteps((prev) => [...prev, step])
         if (i === result.steps.length - 1) {
+          setPhotoMode(result.mode === 'photo')
           setMetadata(result.metadata)
           setDetecting(false)
         }
@@ -125,12 +127,15 @@ export default function Page() {
           const cv = makeCanvas(CANVAS_W, CANVAS_H)
           const ctx = cv.getContext('2d')
           if (!ctx) return
-          // fit contain
+          // Fill an OPAQUE backdrop first so the letterbox bars are not
+          // transparent — this keeps real photos routed to the photo pipeline
+          // (a fully opaque image) instead of the alpha silhouette pipeline.
+          ctx.fillStyle = '#0d0d0d'
+          ctx.fillRect(0, 0, CANVAS_W, CANVAS_H)
+          // fit contain, undistorted
           const ratio = Math.min(CANVAS_W / img.width, CANVAS_H / img.height)
           const dw = img.width * ratio
           const dh = img.height * ratio
-          ctx.drawImage(cv, 0, 0) // no-op keep transparent
-          ctx.clearRect(0, 0, CANVAS_W, CANVAS_H)
           ctx.drawImage(img, (CANVAS_W - dw) / 2, (CANVAS_H - dh) / 2, dw, dh)
           vehicleCanvasRef.current = cv
           uploadedVehicle.current = cv
